@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Adapter 行为诊断</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        body { background: #0a0e1a; color: #f1f5f9; font-family: monospace; padding: 20px; font-size: 13px; }
+        h2 { color: #818cf8; border-bottom: 1px solid #2a3654; padding-bottom: 10px; }
+        canvas { background: #111827; border: 1px solid #2a3654; border-radius: 8px; display: block; margin: 16px 0; }
+        .result { background: #111827; border-radius: 8px; padding: 16px; margin: 16px 0; white-space: pre-wrap; color: #10b981; }
+        .warning { color: #f59e0b; }
+        .danger { color: #ef4444; }
+        label { display: block; margin: 8px 0; }
+        button { padding: 8px 16px; background: #6366f1; color: white; border: none; border-radius: 6px; cursor: pointer; margin: 8px 0; }
+    </style>
+</head>
+<body>
+    <h2>Chart.js xAxis Scale Type 诊断</h2>
+
+    <div id="result" class="result">初始化中...</div>
+
+    <canvas id="myChart" width="900" height="300"></canvas>
+
+<script>
+const dates = ['2026-03-01','2026-03-05','2026-03-10','2026-03-15','2026-03-20'];
+const values = [100000, 102000, 98500, 103500, 101000];
+
+const opts = {
+    responsive: false,
+    animation: false,
+    plugins: { legend: { display: false } },
+    scales: {
+        x: {
+            type: 'category',
+            grid: { color: 'rgba(42,54,84,0.8)' },
+            ticks: { color: '#94a3b8', maxRotation: 0, autoSkip: true, maxTicksLimit: 12 }
+        },
+        y: {
+            grid: { color: 'rgba(42,54,84,0.8)' },
+            ticks: { color: '#94a3b8' }
+        }
+    }
+};
+
+const chart = new Chart(document.getElementById('myChart'), {
+    type: 'line',
+    data: {
+        labels: dates,
+        datasets: [{
+            label: '资金',
+            data: values,
+            borderColor: '#6366f1', borderWidth: 2, fill: false, pointRadius: 4
+        }]
+    },
+    options: opts
+});
+
+// 诊断
+const result = document.getElementById('result');
+const lines = [];
+lines.push('Chart.js version: ' + Chart.version);
+lines.push('Adapter available: ' + (typeof Chart._adapters?._date?.parse !== 'undefined' ? 'YES (date-fns bundle loaded!)' : 'NO'));
+
+// 检查x轴实际类型
+const xScale = chart.scales.x;
+lines.push('');
+lines.push('=== X轴诊断 ===');
+lines.push('xScale.options.type: ' + JSON.stringify(xScale.options?.type));
+lines.push('xScale.type: ' + xScale.type);
+lines.push('xScale.min: ' + xScale.min);
+lines.push('xScale.max: ' + xScale.max);
+lines.push('xScale.ticks.min: ' + xScale.ticks.min);
+lines.push('xScale.ticks.max: ' + xScale.ticks.max);
+lines.push('xScale._userMin: ' + xScale._userMin);
+lines.push('xScale._userMax: ' + xScale._userMax);
+lines.push('');
+lines.push('=== 结论 ===');
+
+if (xScale.type !== 'category') {
+    lines.push('❌ PROBLEM: x轴类型是 "' + xScale.type + '" 而非 "category"!');
+    lines.push('   → chartjs-adapter-date-fns 的 date adapter 覆盖了 scale 类型');
+    lines.push('   → date adapter 把日期字符串解析为时间戳，导致坐标轴范围巨大');
+    lines.push('');
+    lines.push('=== 修复方案 ===');
+    lines.push('在所有图表 options.scales.x 中移除 type 字段');
+    lines.push('改为: scales: { x: { grid: {}, ticks: {} } } (不指定type)');
+    lines.push('然后在 HTML 中把所有日期改为普通文本: "D1","D2"...');
+    result.className = 'result danger';
+} else {
+    lines.push('✅ x轴类型正确: ' + xScale.type);
+    lines.push('图表应该正常渲染');
+    result.className = 'result';
+}
+
+result.textContent = lines.join('\n');
+console.log('Scale type:', xScale.type);
+console.log('Scale min/max:', xScale.min, xScale.max);
+</script>
+</body>
+</html>

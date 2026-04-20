@@ -1,0 +1,30 @@
+# 依赖
+gunicorn
+
+# 日志
+*.log
+server.log
+server_err.log
+
+# 测试文件
+test_*.py
+*_test.py
+check_*.py
+debug_*.py
+quick_test.py
+start_server.py
+check_api.py
+final_verify.py
+
+# 本地数据
+backtest*.json
+*.txt
+mock_data.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 邮件配置（上线后会被环境变量覆盖）
+.env
+.env.local

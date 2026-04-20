@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Chart Debug</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        body { background: #1a2236; color: #f1f5f9; font-family: sans-serif; padding: 20px; }
+        .test { border: 1px solid #2a3654; border-radius: 12px; padding: 20px; margin: 16px 0; }
+        canvas { background: #111827; border-radius: 8px; }
+        h3 { margin-bottom: 12px; color: #94a3b8; }
+        pre { background: #111; padding: 12px; border-radius: 8px; font-size: 12px; overflow-x: auto; color: #10b981; }
+    </style>
+</head>
+<body>
+    <h2>Chart.js 坐标轴测试</h2>
+    <p id="info">加载中...</p>
+
+    <!-- 测试1: category + 日期字符串 -->
+    <div class="test">
+        <h3>测试1: type='category' + 日期字符串 (修复后)</h3>
+        <canvas id="chart1" width="800" height="200"></canvas>
+    </div>
+
+    <!-- 测试2: linear + 数值 -->
+    <div class="test">
+        <h3>测试2: type='linear' + 数值</h3>
+        <canvas id="chart2" width="800" height="200"></canvas>
+    </div>
+
+    <!-- 测试3: 无数据 -->
+    <div class="test">
+        <h3>测试3: 空数组</h3>
+        <canvas id="chart3" width="800" height="200"></canvas>
+    </div>
+
+    <!-- 测试4: 一个点 -->
+    <div class="test">
+        <h3>测试4: 只有一个数据点</h3>
+        <canvas id="chart4" width="800" height="200"></canvas>
+    </div>
+
+    <div class="test">
+        <h3>结论</h3>
+        <pre id="result">检查中...</pre>
+    </div>
+
+<script>
+const dates = ['2026-03-01','2026-03-05','2026-03-10','2026-03-15','2026-03-20'];
+const equity = [100000, 102000, 98500, 103500, 101000];
+
+document.getElementById('info').textContent = 'Chart.js version: ' + Chart.version;
+
+const opts = {
+    responsive: false,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: {
+        legend: { display: false }
+    },
+    scales: {
+        x: {
+            type: 'category',
+            grid: { color: 'rgba(42,54,84,0.8)' },
+            ticks: { color: '#94a3b8', maxRotation: 0, autoSkip: true, maxTicksLimit: 12 }
+        },
+        y: {
+            grid: { color: 'rgba(42,54,84,0.8)' },
+            ticks: { color: '#94a3b8' }
+        }
+    }
+};
+
+// 测试1: category + 日期字符串
+new Chart(document.getElementById('chart1'), {
+    type: 'line',
+    data: {
+        labels: dates,
+        datasets: [{
+            data: equity,
+            borderColor: '#6366f1',
+            borderWidth: 2,
+            fill: false,
+            pointRadius: 4,
+        }]
+    },
+    options: opts
+});
+
+// 测试2: linear + 数值
+new Chart(document.getElementById('chart2'), {
+    type: 'line',
+    data: {
+        labels: [1, 2, 3, 4, 5],
+        datasets: [{
+            data: equity,
+            borderColor: '#10b981',
+            borderWidth: 2,
+            fill: false,
+        }]
+    },
+    options: {
+        ...opts,
+        scales: {
+            x: {
+                type: 'linear',
+                min: 1,
+                grid: { color: 'rgba(42,54,84,0.8)' },
+                ticks: { color: '#94a3b8' }
+            },
+            y: {
+                grid: { color: 'rgba(42,54,84,0.8)' },
+                ticks: { color: '#94a3b8' }
+            }
+        }
+    }
+});
+
+// 测试3: 空数组
+new Chart(document.getElementById('chart3'), {
+    type: 'line',
+    data: { labels: [], datasets: [{ data: [], borderColor: '#ef4444' }] },
+    options: { ...opts, scales: { x: { type: 'category' }, y: { grid: {} } } }
+});
+
+// 测试4: 只有一个点
+new Chart(document.getElementById('chart4'), {
+    type: 'line',
+    data: {
+        labels: ['2026-03-01'],
+        datasets: [{ data: [100000], borderColor: '#f59e0b', borderWidth: 2 }]
+    },
+    options: opts
+});
+
+document.getElementById('result').textContent =
+    'Chart.js 已加载，4个图表已渲染。\n' +
+    '如果坐标轴延伸到无穷远，说明 chartjs-adapter-date-fns 仍在干扰。\n' +
+    '解决：将 chartjs-adapter-date-fns 移除，或将所有日期字符串改为普通文本（如 "D1","D2"...）';
+</script>
+</body>
+</html>

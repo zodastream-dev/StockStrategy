@@ -1,0 +1,1977 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>策略回测平台 | Strategy Backtester</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: #1a2236;
+            --bg-card-hover: #1f2a45;
+            --border: #2a3654;
+            --accent: #6366f1;
+            --accent-light: #818cf8;
+            --accent-glow: rgba(99, 102, 241, 0.3);
+            --success: #10b981;
+            --success-bg: rgba(16, 185, 129, 0.1);
+            --danger: #ef4444;
+            --danger-bg: rgba(239, 68, 68, 0.1);
+            --warning: #f59e0b;
+            --warning-bg: rgba(245, 158, 11, 0.1);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --radius: 12px;
+            --radius-sm: 8px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Noto Sans SC', -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* 背景装饰 */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background:
+                radial-gradient(ellipse at 20% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(16, 185, 129, 0.05) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 24px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* 头部 */
+        header {
+            padding: 24px 0 16px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 32px;
+        }
+
+        .header-inner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-light));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            box-shadow: 0 4px 20px var(--accent-glow);
+        }
+
+        .logo-text {
+            font-size: 22px;
+            font-weight: 700;
+            background: linear-gradient(90deg, #fff, var(--text-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .logo-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+            letter-spacing: 2px;
+        }
+
+        /* 市场指数栏 */
+        .market-bar {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .market-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            padding: 6px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .market-item:hover { border-color: var(--accent); }
+
+        .market-name { color: var(--text-secondary); }
+
+        .market-price { font-family: 'JetBrains Mono', monospace; font-weight: 500; }
+
+        .market-change { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+        .market-up { color: var(--danger); }
+        .market-down { color: var(--success); }
+
+        /* 布局 */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            gap: 24px;
+            align-items: start;
+        }
+
+        @media (max-width: 900px) {
+            .main-grid { grid-template-columns: 1fr; }
+        }
+
+        /* 左侧面板 */
+        .left-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        /* 卡片 */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+
+        .card:hover { border-color: rgba(99, 102, 241, 0.3); }
+
+        .card-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-body { padding: 20px; }
+
+        /* 策略选择 */
+        .strategy-list { display: flex; flex-direction: column; gap: 8px; }
+
+        .strategy-item {
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .strategy-item:hover { background: var(--bg-card-hover); border-color: var(--accent); }
+
+        .strategy-item.active {
+            background: rgba(99, 102, 241, 0.1);
+            border-color: var(--accent);
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.15);
+        }
+
+        .strategy-item.active::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: var(--accent);
+            border-radius: 3px 0 0 3px;
+        }
+
+        .strategy-name {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .strategy-desc {
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+
+        .strategy-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-top: 6px;
+            font-weight: 500;
+        }
+
+        .tag-cross { background: rgba(99, 102, 241, 0.15); color: var(--accent-light); }
+        .tag-event { background: rgba(16, 185, 129, 0.15); color: var(--success); }
+        .tag-technical { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
+        .tag-breakout { background: rgba(236, 72, 153, 0.15); color: #ec4899; }
+
+        /* 表单 */
+        .form-group { margin-bottom: 16px; }
+        .form-group:last-child { margin-bottom: 0; }
+
+        .form-label {
+            display: block;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 10px 14px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: 'JetBrains Mono', monospace;
+            transition: all 0.2s;
+            outline: none;
+        }
+
+        .form-input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .form-input::placeholder { color: var(--text-muted); }
+
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+        .param-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-sm);
+            margin-bottom: 8px;
+        }
+
+        .param-item:last-child { margin-bottom: 0; }
+
+        .param-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .param-input {
+            width: 80px;
+            padding: 4px 8px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--accent-light);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            text-align: right;
+            outline: none;
+        }
+
+        .param-input:focus { border-color: var(--accent); }
+
+        .param-desc {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            margin-bottom: 8px;
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .checkbox-label {
+            font-size: 13px;
+            color: var(--text-primary);
+        }
+
+        .checkbox-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* 按钮 */
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: 'Noto Sans SC', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), #4f46e5);
+            color: #fff;
+            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 30px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-primary:active { transform: translateY(0); }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-loading::after {
+            content: '';
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-left: 8px;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* 右侧面板 */
+        .right-panel { display: flex; flex-direction: column; gap: 16px; }
+
+        /* KPI 指标卡 */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+        }
+
+        @media (max-width: 1100px) {
+            .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        .kpi-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 18px 20px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.2s;
+        }
+
+        .kpi-card:hover { border-color: rgba(99, 102, 241, 0.3); transform: translateY(-2px); }
+
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+        }
+
+        .kpi-card.success::before { background: linear-gradient(90deg, var(--success), transparent); }
+        .kpi-card.danger::before { background: linear-gradient(90deg, var(--danger), transparent); }
+        .kpi-card.warning::before { background: linear-gradient(90deg, var(--warning), transparent); }
+        .kpi-card.accent::before { background: linear-gradient(90deg, var(--accent), transparent); }
+
+        .kpi-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+        }
+
+        .kpi-value {
+            font-size: 28px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+
+        .kpi-card.success .kpi-value { color: var(--success); }
+        .kpi-card.danger .kpi-value { color: var(--danger); }
+        .kpi-card.warning .kpi-value { color: var(--warning); }
+        .kpi-card.accent .kpi-value { color: var(--accent-light); }
+
+        .kpi-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        /* 图表区 */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        @media (max-width: 900px) {
+            .charts-grid { grid-template-columns: 1fr; }
+        }
+
+        .chart-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            position: relative;
+            min-height: 300px;
+        }
+
+        .chart-container.full-width { grid-column: 1 / -1; }
+
+        .chart-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .chart-canvas { width: 100% !important; height: 260px !important; }
+
+        /* 交易记录表 */
+        .table-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+
+        .table-header {
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .table-title {
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .table-count {
+            font-size: 12px;
+            color: var(--text-muted);
+            background: var(--bg-secondary);
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+
+        .table-scroll { overflow-x: auto; max-height: 400px; overflow-y: auto; }
+
+        table {
+            min-width: 1200px;
+        }
+
+        table th, table td { white-space: nowrap; }
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        thead {
+            position: sticky;
+            top: 0;
+            background: var(--bg-card);
+            z-index: 1;
+        }
+
+        th {
+            padding: 10px 16px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 10px 16px;
+            border-bottom: 1px solid rgba(42, 54, 84, 0.5);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        tr:last-child td { border-bottom: none; }
+
+        tr:hover td { background: rgba(99, 102, 241, 0.03); }
+
+        .win { color: var(--success); }
+        .lose { color: var(--danger); }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .badge-win { background: var(--success-bg); color: var(--success); }
+        .badge-lose { background: var(--danger-bg); color: var(--danger); }
+
+        /* 空状态 */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 60px 20px;
+            text-align: center;
+        }
+
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .empty-desc {
+            font-size: 14px;
+            color: var(--text-muted);
+            max-width: 400px;
+        }
+
+        /* 加载动画 */
+        .skeleton {
+            background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-card-hover) 50%, var(--bg-card) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: 6px;
+        }
+
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+
+        /* 工具提示 */
+        .tooltip {
+            position: relative;
+        }
+
+        .tooltip-text {
+            visibility: hidden;
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-size: 12px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            position: absolute;
+            z-index: 100;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            border: 1px solid var(--border);
+            pointer-events: none;
+        }
+
+        .tooltip:hover .tooltip-text { visibility: visible; }
+
+        /* 股票搜索下拉 */
+        .stock-search-wrapper { position: relative; }
+
+        .stock-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--bg-card-hover);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 50;
+            display: none;
+            margin-top: 4px;
+        }
+
+        .stock-dropdown.show { display: block; }
+
+        .stock-option {
+            padding: 8px 14px;
+            cursor: pointer;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .stock-option:hover { background: rgba(99, 102, 241, 0.1); }
+
+        .stock-code { color: var(--accent-light); font-family: 'JetBrains Mono', monospace; }
+        .stock-name { color: var(--text-secondary); }
+
+        /* 分隔线 */
+        .divider {
+            height: 1px;
+            background: var(--border);
+            margin: 16px 0;
+        }
+
+        /* 标签页 */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            padding: 4px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-sm);
+            margin-bottom: 16px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 8px 12px;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: var(--text-muted);
+            border: none;
+            background: none;
+        }
+
+        .tab.active {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+        }
+
+        /* 动画 */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .animate-in {
+            animation: fadeInUp 0.4s ease forwards;
+        }
+
+        /* 滚动条 */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-secondary); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+        /* 结果区域 */
+        #results-section { display: none; }
+        #results-section.visible { display: block; }
+
+        /* 错误提示 */
+        .error-banner {
+            background: var(--danger-bg);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: var(--radius-sm);
+            padding: 12px 16px;
+            font-size: 13px;
+            color: var(--danger);
+            margin: 16px 0;
+            display: none;
+        }
+
+        .error-banner.show { display: block; }
+
+        /* 策略参数折叠 */
+        .params-section {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+
+        .params-section.open { max-height: 500px; }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 40px 0;
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+
+        /* ==================== 配置弹窗 ==================== */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .modal-overlay.show { display: flex; }
+
+        .modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            width: 100%;
+            max-width: 520px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            animation: fadeInUp 0.3s ease;
+        }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        .modal-title {
+            font-size: 16px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .modal-close {
+            width: 32px; height: 32px;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 16px;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s;
+        }
+        .modal-close:hover { border-color: var(--accent); color: var(--text-primary); }
+
+        .modal-body {
+            padding: 24px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        .config-desc-box {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 14px 16px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+
+        .config-params-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover { border-color: var(--accent); color: var(--text-primary); }
+
+        .btn-small {
+            padding: 4px 12px;
+            font-size: 12px;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-muted);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-small:hover { border-color: var(--accent); color: var(--accent-light); }
+
+        /* 邮件配置样式 */
+        .email-config-section { margin-top: 8px; }
+        .email-input { margin-bottom: 12px; }
+        .email-success { color: var(--success); }
+        .email-error { color: var(--danger); }
+
+        /* text类型参数输入框 */
+        .form-input[type="text"] { width: 100%; padding: 8px 12px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 14px; outline: none; }
+        .form-input[type="text"]:focus { border-color: var(--accent); }
+
+        /* 策略卡片上的配置按钮 */
+        .strategy-item-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .strategy-item-info { flex: 1; }
+
+        .config-btn {
+            width: 28px; height: 28px;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 14px;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+        .config-btn:hover { border-color: var(--accent); color: var(--accent-light); background: rgba(99,102,241,0.1); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <header>
+            <div class="header-inner">
+                <div class="logo">
+                    <div class="logo-icon">📊</div>
+                    <div>
+                        <div class="logo-text">策略回测平台</div>
+                        <div class="logo-sub">STRATEGY BACKTESTER</div>
+                    </div>
+                </div>
+                <div class="market-bar" id="market-bar">
+                    <div class="market-item skeleton" style="width:120px;height:32px;"></div>
+                </div>
+            </div>
+        </header>
+
+        <!-- 主布局 -->
+        <div class="main-grid">
+            <!-- 左侧：配置面板 -->
+            <div class="left-panel">
+                <!-- 策略选择 -->
+                <div class="card animate-in" style="animation-delay:0.05s">
+                    <div class="card-header">
+                        <div class="card-title">🎯 选择策略</div>
+                    </div>
+                    <div class="card-body" style="padding:12px;">
+                        <div class="strategy-list" id="strategy-list">
+                            <!-- JS动态填充 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 标的与日期 -->
+                <div class="card animate-in" style="animation-delay:0.1s">
+                    <div class="card-header">
+                        <div class="card-title">⚙️ 回测参数</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label class="form-label">股票代码 / Stock Code</label>
+                            <div class="stock-search-wrapper">
+                                <input type="text" class="form-input" id="stock-code"
+                                       placeholder="如 000001 或 贵州茅台" autocomplete="off">
+                                <div class="stock-dropdown" id="stock-dropdown"></div>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">开始日期</label>
+                                <input type="date" class="form-input" id="start-date">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">结束日期</label>
+                                <input type="date" class="form-input" id="end-date">
+                            </div>
+                        </div>
+                        <div class="divider"></div>
+                        <!-- 策略参数 -->
+                        <div class="params-section open" id="params-section">
+                            <div id="params-fields">
+                                <!-- 动态参数 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 运行按钮 -->
+                <div class="card animate-in" style="animation-delay:0.15s">
+                    <div class="card-body">
+                        <button class="btn btn-primary" id="run-btn" onclick="runBacktest()">
+                            <span>▶</span> 运行回测
+                        </button>
+                        <div class="error-banner" id="error-banner"></div>
+                    </div>
+                </div>
+
+                <!-- 邮件配置 -->
+                <div class="card animate-in" style="animation-delay:0.2s">
+                    <div class="card-header">
+                        <div class="card-title">📧 邮件通知</div>
+                        <button class="btn-small" onclick="toggleEmailConfig()" id="email-config-toggle">展开</button>
+                    </div>
+                    <div class="card-body" id="email-config-body" style="display:none;">
+                        <div class="form-group">
+                            <label class="form-label">发件邮箱</label>
+                            <input type="email" class="form-input" id="email-sender"
+                                   placeholder="your_email@qq.com" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">SMTP授权码</label>
+                            <input type="password" class="form-input" id="email-password"
+                                   placeholder="邮箱授权码（非登录密码）">
+                            <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">
+                                💡 QQ邮箱需开启SMTP服务，获取授权码
+                            </div>
+                        </div>
+                        <div class="form-group" style="display:flex;gap:8px;">
+                            <button class="btn btn-secondary" style="flex:1;" onclick="saveEmailConfig()">
+                                保存配置
+                            </button>
+                            <button class="btn btn-secondary" style="flex:1;" onclick="testEmail()">
+                                发送测试
+                            </button>
+                        </div>
+                        <div id="email-status" style="font-size:12px;margin-top:8px;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：结果面板 -->
+            <div class="right-panel" id="results-section">
+                <!-- KPI卡片 -->
+                <div class="kpi-grid" id="kpi-grid">
+                    <!-- 动态填充 -->
+                </div>
+
+                <!-- 图表区 -->
+                <div class="charts-grid">
+                    <div class="chart-container">
+                        <div class="chart-title">💹 每日资金曲线</div>
+                        <canvas id="equity-chart" class="chart-canvas"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <div class="chart-title">📈 单笔收益率分布</div>
+                        <canvas id="return-chart" class="chart-canvas"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <div class="chart-title">🥧 盈亏分布</div>
+                        <canvas id="winloss-chart" class="chart-canvas"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <div class="chart-title">📊 月度收益率</div>
+                        <canvas id="monthly-chart" class="chart-canvas"></canvas>
+                    </div>
+                    <div class="chart-container full-width">
+                        <div class="chart-title">📉 收益散点分布</div>
+                        <canvas id="scatter-chart" class="chart-canvas"></canvas>
+                    </div>
+                </div>
+
+                <!-- 交易记录 -->
+                <div class="table-container">
+                    <div class="table-header">
+                        <div class="table-title">📋 交易明细 <span class="table-count" id="trade-count">0</span></div>
+                    </div>
+                    <div class="table-scroll">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>日期</th>
+                                    <th>股票</th>
+                                    <th>名称</th>
+                                    <th>操作</th>
+                                    <th>价格</th>
+                                    <th>数量</th>
+                                    <th>金额</th>
+                                    <th>盈亏</th>
+                                    <th>持有天数</th>
+                                    <th>原因</th>
+                                </tr>
+                            </thead>
+                            <tbody id="trade-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 空状态 -->
+            <div class="right-panel" id="empty-section">
+                <div class="card">
+                    <div class="empty-state">
+                        <div class="empty-icon">📈</div>
+                        <div class="empty-title">开始你的策略回测</div>
+                        <div class="empty-desc">
+                            选择一个策略，配置参数，点击「运行回测」查看详细分析结果。
+                            支持A+H股联动、MACD金叉、均线突破、RSI超卖、双均线等多种策略。
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            策略回测平台 · 数据来源：东方财富 · 仅供研究参考，不构成投资建议
+        </footer>
+    </div>
+
+    <!-- 配置弹窗 -->
+    <div class="modal-overlay" id="config-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title" id="modal-title">
+                    <span>⚙️</span> <span id="modal-strategy-name"></span>
+                </div>
+                <button class="modal-close" onclick="closeConfigModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="config-desc-box" id="modal-desc"></div>
+                <div class="config-params-title">参数设置</div>
+                <div id="modal-params"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeConfigModal()" style="flex:1">取消</button>
+                <button class="btn btn-primary" onclick="applyConfig()" style="flex:1">应用配置</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // ===================== 全局状态 =====================
+    let strategies = [];
+    let currentStrategy = null;
+    let charts = {};
+
+    // ===================== 初始化 =====================
+    document.addEventListener('DOMContentLoaded', async () => {
+        // 设置默认日期
+        const today = new Date();
+        const sixtyDaysAgo = new Date(today - 60 * 24 * 3600 * 1000);
+        document.getElementById('end-date').value = formatDate(today);
+        document.getElementById('start-date').value = formatDate(sixtyDaysAgo);
+
+        // 加载策略列表
+        await loadStrategies();
+        // 加载市场数据
+        loadMarketOverview();
+
+        // 股票搜索
+        setupStockSearch();
+    });
+
+    function formatDate(d) {
+        return d.toISOString().split('T')[0];
+    }
+
+    // ===================== 策略加载 =====================
+    async function loadStrategies() {
+        try {
+            const resp = await fetch('/api/strategies');
+            const data = await resp.json();
+            strategies = data.strategies;
+            renderStrategyList();
+            if (strategies.length > 0) selectStrategy(strategies[0].id);
+        } catch (e) {
+            showError('加载策略失败: ' + e.message);
+        }
+    }
+
+    function renderStrategyList() {
+        const container = document.getElementById('strategy-list');
+        const tagMap = {
+            'ah_limit_up': { cls: 'tag-event', text: '事件驱动' },
+            'macd_cross': { cls: 'tag-technical', text: 'MACD指标' },
+            'breakout': { cls: 'tag-breakout', text: '趋势突破' },
+            'rsi_oversold': { cls: 'tag-technical', text: 'RSI指标' },
+            'dual_ma': { cls: 'tag-cross', text: '均线策略' },
+        };
+
+        container.innerHTML = strategies.map(s => `
+            <div class="strategy-item" data-id="${s.id}" onclick="selectStrategy('${s.id}')">
+                <div class="strategy-item-row">
+                    <div class="strategy-item-info">
+                        <div class="strategy-name">${s.name}</div>
+                        <div class="strategy-desc">${s.description}</div>
+                        ${tagMap[s.id] ? `<span class="strategy-tag ${tagMap[s.id].cls}">${tagMap[s.id].text}</span>` : ''}
+                    </div>
+                    <button class="config-btn" onclick="event.stopPropagation(); openConfigModal('${s.id}')"
+                            title="策略配置">⚙️</button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function selectStrategy(id) {
+        currentStrategy = strategies.find(s => s.id === id);
+        if (!currentStrategy) return;
+
+        document.querySelectorAll('.strategy-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.id === id);
+        });
+
+        // 自动填充股票代码（A+H策略）
+        if (id === 'ah_limit_up') {
+            document.getElementById('stock-code').value = '000001';
+            document.getElementById('stock-code').placeholder = '000001 (可不填，自动扫描全市场)';
+        } else {
+            document.getElementById('stock-code').placeholder = '如 000001';
+        }
+
+        renderParams();
+    }
+
+    function renderParams() {
+        const container = document.getElementById('params-fields');
+        if (!currentStrategy) { container.innerHTML = ''; return; }
+
+        const html = currentStrategy.params.map(p => {
+            if (p.type === 'checkbox') {
+                return `
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="param_${p.name}" value="true">
+                        <div>
+                            <div class="checkbox-label">${p.label}</div>
+                            ${p.description ? `<div class="checkbox-hint">${p.description}</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            } else if (p.type === 'text') {
+                return `
+                    <div class="form-group" style="margin-bottom:12px;">
+                        <label class="form-label">${p.label}</label>
+                        <input type="text" class="form-input" id="param_${p.name}"
+                               value="${p.default || ''}" placeholder="${p.placeholder || ''}">
+                        ${p.description ? `<div class="param-desc" style="font-size:11px;color:var(--text-muted);margin-top:4px;">${p.description}</div>` : ''}
+                    </div>
+                `;
+            } else {
+                return `
+                    <div class="param-item">
+                        <div>
+                            <div class="param-label">${p.label}</div>
+                            ${p.description ? `<div class="param-desc">${p.description}</div>` : ''}
+                        </div>
+                        <input type="number" class="param-input" id="param_${p.name}"
+                               value="${p.default}" min="${p.min || 0}" max="${p.max || 999}"
+                               step="${p.step || 1}">
+                    </div>
+                `;
+            }
+        }).join('');
+
+        container.innerHTML = html;
+    }
+
+    function getParams() {
+        if (!currentStrategy) return {};
+        const params = {};
+        currentStrategy.params.forEach(p => {
+            if (p.type === 'checkbox') {
+                params[p.name] = document.getElementById(`param_${p.name}`)?.checked || false;
+            } else {
+                const el = document.getElementById(`param_${p.name}`);
+                if (el) {
+                    if (p.type === 'number') {
+                        params[p.name] = parseFloat(el.value) || p.default;
+                    } else {
+                        params[p.name] = el.value;
+                    }
+                } else {
+                    params[p.name] = p.default;
+                }
+            }
+        });
+        return params;
+    }
+
+    // ===================== 股票搜索 =====================
+    let searchTimer = null;
+    function setupStockSearch() {
+        const input = document.getElementById('stock-code');
+        const dropdown = document.getElementById('stock-dropdown');
+
+        input.addEventListener('input', () => {
+            clearTimeout(searchTimer);
+            const val = input.value.trim();
+            if (val.length < 1) { dropdown.classList.remove('show'); return; }
+
+            searchTimer = setTimeout(async () => {
+                try {
+                    const resp = await fetch(`/api/stocks/search?q=${encodeURIComponent(val)}`);
+                    const data = await resp.json();
+                    if (data.stocks && data.stocks.length > 0) {
+                        dropdown.innerHTML = data.stocks.map(s =>
+                            `<div class="stock-option" onclick="selectStock('${s.code}', '${s.name}')">
+                                <span class="stock-code">${s.code}</span>
+                                <span class="stock-name">${s.name}</span>
+                            </div>`
+                        ).join('');
+                        dropdown.classList.add('show');
+                    } else {
+                        dropdown.classList.remove('show');
+                    }
+                } catch (e) {
+                    dropdown.classList.remove('show');
+                }
+            }, 300);
+        });
+
+        input.addEventListener('blur', () => {
+            setTimeout(() => dropdown.classList.remove('show'), 200);
+        });
+    }
+
+    function selectStock(code, name) {
+        document.getElementById('stock-code').value = code;
+        document.getElementById('stock-dropdown').classList.remove('show');
+    }
+
+    // ===================== 回测运行 =====================
+    async function runBacktest() {
+        const btn = document.getElementById('run-btn');
+        const errorBanner = document.getElementById('error-banner');
+        const resultsSection = document.getElementById('results-section');
+        const emptySection = document.getElementById('empty-section');
+
+        errorBanner.classList.remove('show');
+        btn.disabled = true;
+        btn.innerHTML = '<span>⏳</span> 运行中...' ;
+        btn.classList.add('btn-loading');
+
+        const payload = {
+            strategy_id: currentStrategy?.id || '',
+            stock_code: document.getElementById('stock-code').value.trim(),
+            start_date: document.getElementById('start-date').value,
+            end_date: document.getElementById('end-date').value,
+            params: getParams()
+        };
+
+        try {
+            const resp = await fetch('/api/backtest', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await resp.json();
+
+            if (data.error) {
+                showError(data.error + (data.trace ? '<br><small>' + data.trace.split('\n').slice(-3).join('<br>') + '</small>' : ''));
+                return;
+            }
+
+            // 显示结果
+            emptySection.style.display = 'none';
+            resultsSection.classList.add('visible');
+            try {
+                renderResults(data);
+            } catch (renderErr) {
+                console.error('renderResults error:', renderErr);
+                showError('渲染结果时出错: ' + renderErr.message + '<br><small>' + renderErr.stack?.split('\n').slice(0,3).join('<br>') + '</small>');
+            }
+
+        } catch (e) {
+            showError('请求失败: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<span>▶</span> 运行回测';
+            btn.classList.remove('btn-loading');
+        }
+    }
+
+    function showError(msg) {
+        const banner = document.getElementById('error-banner');
+        banner.innerHTML = '⚠️ ' + msg;
+        banner.classList.add('show');
+    }
+
+    // ===================== 结果渲染 =====================
+    function renderResults(data) {
+        const m = data.metrics;
+
+        // KPI卡片
+        document.getElementById('kpi-grid').innerHTML = `
+            <div class="kpi-card success">
+                <div class="kpi-label">成功率</div>
+                <div class="kpi-value">${m.success_rate}%</div>
+                <div class="kpi-sub">${m.win_trades}胜 / ${m.lose_trades}负</div>
+            </div>
+            <div class="kpi-card ${m.total_return_pct >= 0 ? 'success' : 'danger'}">
+                <div class="kpi-label">总收益率</div>
+                <div class="kpi-value">${m.total_return_pct >= 0 ? '+' : ''}${m.total_return_pct}%</div>
+                <div class="kpi-sub">年化 ${m.annual_return}%</div>
+            </div>
+            <div class="kpi-card warning">
+                <div class="kpi-label">最大回撤</div>
+                <div class="kpi-value">-${m.max_drawdown}%</div>
+                <div class="kpi-sub">夏普比率 ${m.sharpe_ratio}</div>
+            </div>
+            <div class="kpi-card accent">
+                <div class="kpi-label">交易次数</div>
+                <div class="kpi-value">${m.total_trades}</div>
+                <div class="kpi-sub">均笔收益 ${m.avg_return_pct}%</div>
+            </div>
+        `;
+
+        // 渲染图表
+        renderEquityChart(data.equity_curve, data.metrics);
+        renderReturnChart(data.trades);
+        renderWinLossChart(data.metrics);
+        renderMonthlyChart(data.monthly_returns);
+        renderScatterChart(data.trades);
+
+        // 渲染交易记录
+        renderTradeTable(data.trades, currentStrategy?.id);
+    }
+
+    // ===================== 图表渲染 =====================
+    function destroyCharts() {
+        Object.values(charts).forEach(c => c?.destroy?.());
+        charts = {};
+    }
+
+    const CHART_COLORS = {
+        accent: '#6366f1',
+        accentLight: 'rgba(99, 102, 241, 0.2)',
+        success: '#10b981',
+        successLight: 'rgba(16, 185, 129, 0.2)',
+        danger: '#ef4444',
+        dangerLight: 'rgba(239, 68, 68, 0.2)',
+        warning: '#f59e0b',
+        text: '#94a3b8',
+        grid: 'rgba(42, 54, 84, 0.8)',
+        bg: '#1a2236'
+    };
+
+    function baseOptions(title) {
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 600 },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: CHART_COLORS.bg,
+                    borderColor: CHART_COLORS.grid,
+                    borderWidth: 1,
+                    titleColor: '#f1f5f9',
+                    bodyColor: '#94a3b8',
+                    padding: 12,
+                    cornerRadius: 8,
+                }
+            },
+            scales: {
+                x: {
+                    type: 'category',
+                    grid: { color: CHART_COLORS.grid, drawBorder: false },
+                    ticks: {
+                        color: CHART_COLORS.text,
+                        font: { size: 11 },
+                        maxRotation: 0,
+                        autoSkip: true,
+                        maxTicksLimit: 12
+                    }
+                },
+                y: {
+                    grid: { color: CHART_COLORS.grid, drawBorder: false },
+                    ticks: { color: CHART_COLORS.text, font: { size: 11 } }
+                }
+            }
+        };
+    }
+
+    function renderEquityChart(curve, metrics) {
+        destroyCharts();
+        const ctx = document.getElementById('equity-chart').getContext('2d');
+        const labels = curve.map(e => e.date);
+        const values = curve.map(e => Math.round(e.equity * 100) / 100);
+
+        charts.equity = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    label: '资金曲线',
+                    data: values,
+                    borderColor: CHART_COLORS.accent,
+                    backgroundColor: CHART_COLORS.accentLight,
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: labels.length > 30 ? 0 : 3,
+                    pointHoverRadius: 5,
+                    pointBackgroundColor: CHART_COLORS.accent,
+                }]
+            },
+            options: {
+                ...baseOptions(),
+                interaction: { intersect: false, mode: 'index' },
+                plugins: {
+                    ...baseOptions().plugins,
+                    tooltip: {
+                        ...baseOptions().plugins.tooltip,
+                        callbacks: {
+                            label: ctx => `资金: ¥${ctx.parsed.y.toLocaleString()}`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function renderReturnChart(trades) {
+        const ctx = document.getElementById('return-chart').getContext('2d');
+        const returns = trades.map(t => ({ pnl: t.pnl_pct, date: t.date, name: t.stock_name }));
+
+        charts.return = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: returns.map(r => r.date),
+                datasets: [{
+                    label: '收益率',
+                    data: returns.map(r => r.pnl),
+                    backgroundColor: returns.map(r => r.pnl >= 0 ? CHART_COLORS.success + '99' : CHART_COLORS.danger + '99'),
+                    borderColor: returns.map(r => r.pnl >= 0 ? CHART_COLORS.success : CHART_COLORS.danger),
+                    borderWidth: 1,
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                ...baseOptions(),
+                plugins: {
+                    ...baseOptions().plugins,
+                    tooltip: {
+                        ...baseOptions().plugins.tooltip,
+                        callbacks: {
+                            label: ctx => `${ctx.parsed.y >= 0 ? '+' : ''}${ctx.parsed.y.toFixed(2)}%`
+                        }
+                    }
+                },
+                scales: {
+                    ...baseOptions().scales,
+                    x: {
+                        ...baseOptions().scales.x,
+                        ticks: { display: false }
+                    }
+                }
+            }
+        });
+    }
+
+    function renderWinLossChart(metrics) {
+        const ctx = document.getElementById('winloss-chart').getContext('2d');
+        charts.winloss = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['盈利', '亏损'],
+                datasets: [{
+                    data: [metrics.win_trades, metrics.lose_trades],
+                    backgroundColor: [CHART_COLORS.success + 'cc', CHART_COLORS.danger + 'cc'],
+                    borderColor: [CHART_COLORS.success, CHART_COLORS.danger],
+                    borderWidth: 2,
+                    hoverOffset: 8,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '65%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            color: CHART_COLORS.text,
+                            padding: 16,
+                            font: { size: 13 }
+                        }
+                    },
+                    tooltip: {
+                        ...baseOptions().plugins.tooltip,
+                        callbacks: {
+                            label: ctx => ` ${ctx.label}: ${ctx.parsed} 笔`
+                        }
+                    }
+                }
+            },
+            plugins: [{
+                id: 'centerText',
+                beforeDraw(chart) {
+                    const { width, height, ctx } = chart;
+                    ctx.restore();
+                    const fontSize = (height / 80).toFixed(2);
+                    ctx.font = `bold ${fontSize * 18}px JetBrains Mono`;
+                    ctx.fillStyle = '#f1f5f9';
+                    ctx.textBaseline = 'middle';
+                    const text = metrics.success_rate + '%';
+                    const textX = Math.round((width - ctx.measureText(text).width) / 2);
+                    ctx.fillText(text, textX, height / 2 - 5);
+                    ctx.font = `${fontSize * 10}px Noto Sans SC`;
+                    ctx.fillStyle = '#64748b';
+                    ctx.fillText('成功率', width / 2 - ctx.measureText('成功率').width / 2, height / 2 + 18);
+                    ctx.save();
+                }
+            }]
+        });
+    }
+
+    function renderMonthlyChart(monthlyReturns) {
+        const ctx = document.getElementById('monthly-chart').getContext('2d');
+        const months = Object.keys(monthlyReturns).sort();
+        const values = months.map(m => monthlyReturns[m]);
+
+        charts.monthly = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: months,
+                datasets: [{
+                    label: '月度收益',
+                    data: values,
+                    backgroundColor: values.map(v => v >= 0 ? CHART_COLORS.success + '99' : CHART_COLORS.danger + '99'),
+                    borderColor: values.map(v => v >= 0 ? CHART_COLORS.success : CHART_COLORS.danger),
+                    borderWidth: 1,
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                ...baseOptions(),
+                plugins: {
+                    ...baseOptions().plugins,
+                    tooltip: {
+                        ...baseOptions().plugins.tooltip,
+                        callbacks: {
+                            label: ctx => `${ctx.parsed.y >= 0 ? '+' : ''}${ctx.parsed.y.toFixed(2)}%`
+                        }
+                    }
+                },
+                scales: {
+                    ...baseOptions().scales,
+                    y: {
+                        ...baseOptions().scales.y,
+                        ticks: {
+                            ...baseOptions().scales.y.ticks,
+                            callback: v => v + '%'
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function renderScatterChart(trades) {
+        const ctx = document.getElementById('scatter-chart').getContext('2d');
+        const points = trades.map((t, i) => ({
+            x: i + 1,
+            y: t.pnl_pct,
+            date: t.date,
+            name: t.stock_name,
+            action: t.action
+        }));
+
+        charts.scatter = new Chart(ctx, {
+            type: 'scatter',
+            data: {
+                datasets: [{
+                    label: '单笔收益',
+                    data: points,
+                    backgroundColor: points.map(p => p.y >= 0 ? CHART_COLORS.success + '99' : CHART_COLORS.danger + '99'),
+                    pointBorderColor: points.map(p => p.y >= 0 ? CHART_COLORS.success : CHART_COLORS.danger),
+                    pointRadius: 6,
+                    pointHoverRadius: 9,
+                }]
+            },
+            options: {
+                ...baseOptions(),
+                scales: {
+                    x: {
+                        type: 'linear',
+                        min: Math.max(0, points.length > 0 ? 0.5 : 1),
+                        max: points.length > 0 ? points.length + 0.5 : 2,
+                        grid: { color: CHART_COLORS.grid, drawBorder: false },
+                        title: { display: true, text: '交易序号', color: CHART_COLORS.text, font: { size: 11 } },
+                        ticks: {
+                            color: CHART_COLORS.text,
+                            font: { size: 11 },
+                            stepSize: 1,
+                            callback: v => Number.isInteger(v) ? v : ''
+                        }
+                    },
+                    y: {
+                        ...baseOptions().scales.y,
+                        title: { display: true, text: '收益率 (%)', color: CHART_COLORS.text, font: { size: 11 } },
+                        ticks: { callback: v => v + '%' }
+                    }
+                },
+                plugins: {
+                    ...baseOptions().plugins,
+                    tooltip: {
+                        ...baseOptions().plugins.tooltip,
+                        callbacks: {
+                            title: ctx => `${ctx[0].raw.date}`,
+                            label: ctx => `${ctx.raw.name}: ${ctx.raw.y >= 0 ? '+' : ''}${ctx.raw.y.toFixed(2)}%`
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // ===================== 交易表格 =====================
+    function renderTradeTable(trades, strategyId) {
+        const tbody = document.getElementById('trade-table-body');
+        document.getElementById('trade-count').textContent = trades.length;
+
+        // 动态更新表头
+        const thead = document.querySelector('#results-section table thead tr');
+        if (strategyId === 'ah_limit_up') {
+            thead.innerHTML = `
+                <th>日期</th>
+                <th>H股代码</th>
+                <th>H股名称</th>
+                <th>A股成交额(万元)</th>
+                <th>H股成交量(股)</th>
+                <th>H股收盘价(HKD)</th>
+                <th>H股买入价(涨停后)</th>
+                <th>H股实时股价</th>
+                <th>从买入到收盘盈亏</th>
+                <th>价格来源</th>
+                <th>策略盈亏</th>
+            `;
+        } else {
+            thead.innerHTML = `
+                <th>日期</th>
+                <th>股票</th>
+                <th>名称</th>
+                <th>操作</th>
+                <th>价格</th>
+                <th>数量</th>
+                <th>金额</th>
+                <th>盈亏</th>
+                <th>持有天数</th>
+                <th>原因</th>
+            `;
+        }
+
+        if (!trades || trades.length === 0) {
+            const colspan = strategyId === 'ah_limit_up' ? 11 : 10;
+            tbody.innerHTML = `<tr><td colspan="${colspan}" style="text-align:center;color:var(--text-muted);padding:30px;">暂无交易记录</td></tr>`;
+            return;
+        }
+
+        // AH 策略特殊表格
+        if (strategyId === 'ah_limit_up') {
+            tbody.innerHTML = trades.map(t => `
+                <tr>
+                    <td>${t.date}</td>
+                    <td style="color:var(--accent-light)">${t.stock_code}</td>
+                    <td style="color:var(--text-primary)">${t.stock_name || '-'}</td>
+                    <td>${t.a_vol != null ? t.a_vol.toLocaleString() + '万' : '-'}</td>
+                    <td>${t.hk_vol != null ? t.hk_vol.toLocaleString() : '-'}</td>
+                    <td>${t.hk_close != null ? t.hk_close.toFixed(3) : '-'}</td>
+                    <td style="color:var(--warning)">${t.hk_price_at_limitup != null ? t.hk_price_at_limitup.toFixed(3) : '-'}</td>
+                    <td style="color:var(--accent);font-weight:600">${t.hk_realtime != null ? t.hk_realtime.toFixed(3) : '-'}</td>
+                    <td class="${(t.pnl_by_limitup_to_close || 0) >= 0 ? 'win' : 'lose'}" style="font-weight:600">
+                        ${t.pnl_by_limitup_to_close != null ? ((t.pnl_by_limitup_to_close >= 0 ? '+' : '') + t.pnl_by_limitup_to_close + '%') : '-'}
+                    </td>
+                    <td style="color:var(--text-muted);font-size:10px">${t.price_source || '-'}</td>
+                    <td class="${(t.pnl || 0) >= 0 ? 'win' : 'lose'}" style="font-weight:600">
+                        ${t.pnl !== 0 && t.pnl != null ? ((t.pnl >= 0 ? '+' : '') + (t.pnl * 100).toFixed(2) + '%') : '-'}
+                    </td>
+                </tr>
+            `).join('');
+            return;
+        }
+
+        // 普通策略表格
+        tbody.innerHTML = trades.map(t => `
+            <tr>
+                <td>${t.date}</td>
+                <td style="color:var(--accent-light)">${t.stock_code}</td>
+                <td style="color:var(--text-primary)">${t.stock_name}</td>
+                <td><span class="badge ${t.action === 'buy' ? 'badge-win' : 'badge-lose'}">${t.action === 'buy' ? '买入' : '卖出'}</span></td>
+                <td>¥${t.price.toFixed(3)}</td>
+                <td>${t.shares.toLocaleString()}</td>
+                <td>¥${Math.round(t.amount).toLocaleString()}</td>
+                <td class="${(t.pnl || 0) >= 0 ? 'win' : 'lose'}" style="font-weight:600">
+                    ${t.pnl !== 0 && t.pnl != null ? ((t.pnl >= 0 ? '+' : '') + (t.pnl * 100).toFixed(2) + '%') : '-'}
+                </td>
+                <td>${t.holding_days || '-'}</td>
+                <td style="color:var(--text-muted);font-family:inherit;font-size:11px">${t.reason}</td>
+            </tr>
+        `).join('');
+    }
+
+    // ===================== 市场概览 =====================
+    async function loadMarketOverview() {
+        try {
+            const resp = await fetch('/api/market-overview');
+            const data = await resp.json();
+            if (data.error) return;
+
+            const bar = document.getElementById('market-bar');
+            bar.innerHTML = Object.entries(data).map(([code, info]) => `
+                <div class="market-item tooltip">
+                    <span class="market-name">${info.name}</span>
+                    <span class="market-price">${info.price?.toLocaleString()}</span>
+                    <span class="market-change ${info.change_pct >= 0 ? 'market-up' : 'market-down'}">
+                        ${info.change_pct >= 0 ? '▲' : '▼'} ${Math.abs(info.change_pct)}%
+                    </span>
+                    <span class="tooltip-text">成交: ${info.volume}亿</span>
+                </div>
+            `).join('');
+        } catch (e) {
+            // 静默失败
+        }
+    }
+
+    // ===================== 配置弹窗 =====================
+    function openConfigModal(strategyId) {
+        const s = strategies.find(s => s.id === strategyId);
+        if (!s) return;
+
+        document.getElementById('modal-strategy-name').textContent = s.name;
+        document.getElementById('modal-desc').textContent = s.description;
+
+        // 渲染参数
+        const paramsHtml = s.params.map(p => {
+            if (p.type === 'checkbox') {
+                return `
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="modal_param_${p.name}" value="true"
+                               ${p.default ? 'checked' : ''}>
+                        <div>
+                            <div class="checkbox-label">${p.label}</div>
+                            ${p.description ? `<div class="checkbox-hint">${p.description}</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            } else if (p.type === 'text') {
+                return `
+                    <div class="form-group" style="margin-bottom:12px;">
+                        <label class="form-label">${p.label}</label>
+                        <input type="text" class="form-input" id="modal_param_${p.name}"
+                               value="${p.default || ''}" placeholder="${p.placeholder || ''}">
+                        ${p.description ? `<div class="param-desc" style="font-size:11px;color:var(--text-muted);margin-top:4px;">${p.description}</div>` : ''}
+                    </div>
+                `;
+            } else {
+                return `
+                    <div class="param-item">
+                        <div>
+                            <div class="param-label">${p.label}</div>
+                            ${p.description ? `<div class="param-desc">${p.description}</div>` : ''}
+                        </div>
+                        <input type="number" class="param-input" id="modal_param_${p.name}"
+                               value="${p.default}" min="${p.min || 0}" max="${p.max || 999}"
+                               step="${p.step || 1}">
+                    </div>
+                `;
+            }
+        }).join('');
+
+        document.getElementById('modal-params').innerHTML = paramsHtml || '<div style="color:var(--text-muted);font-size:13px">该策略暂无可调参数</div>';
+
+        document.getElementById('config-modal').classList.add('show');
+    }
+
+    function closeConfigModal() {
+        document.getElementById('config-modal').classList.remove('show');
+    }
+
+    function applyConfig() {
+        if (!currentStrategy) { closeConfigModal(); return; }
+
+        // 把弹窗中的值同步到表单参数区
+        currentStrategy.params.forEach(p => {
+            const modalEl = document.getElementById(`modal_param_${p.name}`);
+            const formEl = document.getElementById(`param_${p.name}`);
+            if (!modalEl || !formEl) return;
+
+            if (p.type === 'checkbox') {
+                formEl.checked = modalEl.checked;
+            } else {
+                formEl.value = modalEl.value;
+            }
+        });
+
+        closeConfigModal();
+    }
+
+    // 点击遮罩关闭
+    document.getElementById('config-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeConfigModal();
+    });
+
+    // ===================== 邮件配置 =====================
+    function toggleEmailConfig() {
+        const body = document.getElementById('email-config-body');
+        const toggle = document.getElementById('email-config-toggle');
+        if (body.style.display === 'none') {
+            body.style.display = 'block';
+            toggle.textContent = '收起';
+            // 加载已保存的配置状态
+            loadEmailConfigStatus();
+        } else {
+            body.style.display = 'none';
+            toggle.textContent = '展开';
+        }
+    }
+
+    async function loadEmailConfigStatus() {
+        try {
+            const resp = await fetch('/api/email/config');
+            const data = await resp.json();
+            const statusEl = document.getElementById('email-status');
+            if (data.configured) {
+                statusEl.innerHTML = '<span class="email-success">✓ SMTP已配置</span>';
+            } else if (data.has_sender) {
+                statusEl.innerHTML = '<span class="email-error">⚠ SMTP未配置授权码</span>';
+            } else {
+                statusEl.innerHTML = '<span style="color:var(--text-muted)">未配置</span>';
+            }
+        } catch (e) {
+            console.error('加载邮件配置失败:', e);
+        }
+    }
+
+    async function saveEmailConfig() {
+        const sender = document.getElementById('email-sender').value.trim();
+        const password = document.getElementById('email-password').value.trim();
+        const statusEl = document.getElementById('email-status');
+
+        if (!sender || !password) {
+            statusEl.innerHTML = '<span class="email-error">请填写完整信息</span>';
+            return;
+        }
+
+        try {
+            const resp = await fetch('/api/email/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    smtp_host: 'smtp.qq.com',
+                    smtp_port: 465,
+                    sender_email: sender,
+                    sender_password: password
+                })
+            });
+            const data = await resp.json();
+            if (data.success) {
+                statusEl.innerHTML = '<span class="email-success">✓ 配置已保存</span>';
+            } else {
+                statusEl.innerHTML = '<span class="email-error">保存失败: ' + data.message + '</span>';
+            }
+        } catch (e) {
+            statusEl.innerHTML = '<span class="email-error">网络错误</span>';
+        }
+    }
+
+    async function testEmail() {
+        const statusEl = document.getElementById('email-status');
+        statusEl.innerHTML = '<span style="color:var(--text-muted)">发送中...</span>';
+
+        try {
+            const resp = await fetch('/api/email/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: document.getElementById('email-sender').value.trim() })
+            });
+            const data = await resp.json();
+            if (data.success) {
+                statusEl.innerHTML = '<span class="email-success">✓ ' + data.message + '</span>';
+            } else {
+                statusEl.innerHTML = '<span class="email-error">发送失败: ' + data.message + '</span>';
+            }
+        } catch (e) {
+            statusEl.innerHTML = '<span class="email-error">网络错误</span>';
+        }
+    }
+    </script>
+</body>
+</html>

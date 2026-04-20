@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>API 诊断</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
+        pre { background: #1a1a2e; padding: 12px; border-radius: 8px; overflow: auto; font-size: 13px; }
+        .ok { color: #10b981; } .err { color: #ef4444; } .warn { color: #f59e0b; }
+        button { padding: 8px 20px; background: #6366f1; color: white; border: none; border-radius: 6px; cursor: pointer; margin: 6px; }
+    </style>
+</head>
+<body>
+<h2>🔍 策略平台 - 实时诊断</h2>
+<button onclick="testStrategies()">① 测试策略列表</button>
+<button onclick="testBacktest()">② 运行回测</button>
+<button onclick="testChartRender()">③ 测试图表渲染</button>
+<pre id="log">点击按钮开始诊断...</pre>
+
+<canvas id="test-canvas" width="400" height="200" style="background:#1a2236;display:none;"></canvas>
+
+<script>
+const log = document.getElementById('log');
+function appendLog(msg, cls='') {
+    const span = document.createElement('span');
+    if (cls) span.className = cls;
+    span.textContent = msg + '\n';
+    log.appendChild(span);
+    log.scrollTop = log.scrollHeight;
+}
+function clearLog() { log.innerHTML = ''; }
+
+async function testStrategies() {
+    clearLog();
+    appendLog('=== 测试 /api/strategies ===');
+    try {
+        const resp = await fetch('/api/strategies');
+        appendLog(`HTTP状态: ${resp.status}`, resp.ok ? 'ok' : 'err');
+        const data = await resp.json();
+        appendLog(`策略数量: ${data.strategies.length}`, 'ok');
+        data.strategies.forEach(s => {
+            appendLog(`  ${s.id}: ${s.name} | params: ${s.params.length}个`);
+            s.params.forEach(p => appendLog(`    - ${p.name} (${p.type}): ${p.label}`));
+        });
+    } catch (e) {
+        appendLog(`ERROR: ${e.message}`, 'err');
+        appendLog(e.stack, 'err');
+    }
+}
+
+async function testBacktest() {
+    clearLog();
+    appendLog('=== 运行回测 2026-04-14 ~ 2026-04-18 ===');
+
+    const today = new Date();
+    const start = new Date(today - 60 * 24 * 3600 * 1000);
+    const fmt = d => d.toISOString().split('T')[0];
+
+    const payload = {
+        strategy_id: 'ah_limit_up',
+        stock_code: '',
+        start_date: '2026-04-14',
+        end_date: '2026-04-18',
+        params: {}
+    };
+
+    try {
+        appendLog(`发送请求: ${JSON.stringify(payload)}`);
+        const resp = await fetch('/api/backtest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        appendLog(`HTTP状态: ${resp.status}`, resp.ok ? 'ok' : 'err');
+        const data = await resp.json();
+
+        if (data.error) {
+            appendLog(`ERROR: ${data.error}`, 'err');
+            return;
+        }
+
+        appendLog(`总交易: ${data.metrics.total_trades}`, 'ok');
+        appendLog(`成功率: ${data.metrics.success_rate}%`, 'ok');
+        appendLog(`总收益: ${data.metrics.total_return_pct}%`, data.metrics.total_return_pct >= 0 ? 'ok' : 'warn');
+        appendLog(`资金曲线: ${data.equity_curve.length}个点`);
+        appendLog(`trades keys: ${data.trades.length > 0 ? Object.keys(data.trades[0]).join(', ') : 'none'}`);
+
+        // 测试图表渲染
+        appendLog('\n=== 测试图表渲染 ===');
+        const canvas = document.getElementById('test-canvas');
+        canvas.style.display = 'block';
+        try {
+            const ctx = canvas.getContext('2d');
+            const labels = data.equity_curve.map(e => e.date);
+            const values = data.equity_curve.map(e => e.equity);
+            const chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [{ label: '资金', data: values, borderColor: '#6366f1' }]
+                },
+                options: {
+                    responsive: false,
+                    scales: { x: { type: 'category' } }
+                }
+            });
+            appendLog('图表渲染: OK', 'ok');
+            setTimeout(() => { chart.destroy(); canvas.style.display = 'none'; }, 2000);
+        } catch (chartErr) {
+            appendLog(`图表错误: ${chartErr.message}`, 'err');
+            appendLog(chartErr.stack, 'err');
+        }
+
+    } catch (e) {
+        appendLog(`ERROR: ${e.message}`, 'err');
+        appendLog(e.stack, 'err');
+    }
+}
+
+function testChartRender() {
+    clearLog();
+    appendLog('=== 测试 Chart.js 基础渲染 ===');
+    const canvas = document.getElementById('test-canvas');
+    canvas.style.display = 'block';
+    try {
+        const ctx = canvas.getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['2026-04-14', '2026-04-15', '2026-04-16'],
+                datasets: [{ label: '测试', data: [1, 3, 2] }]
+            },
+            options: { responsive: false, scales: { x: { type: 'category' } } }
+        });
+        appendLog('Chart.js 渲染: OK', 'ok');
+        appendLog(`Chart.js 版本: ${Chart.version}`);
+        setTimeout(() => { chart.destroy(); canvas.style.display = 'none'; }, 2000);
+    } catch (e) {
+        appendLog(`图表错误: ${e.message}`, 'err');
+        appendLog(e.stack, 'err');
+    }
+}
+
+// 页面加载时自动运行
+window.onerror = (msg, src, line, col, err) => {
+    appendLog(`[全局JS错误] ${msg} @ ${src}:${line}`, 'err');
+};
+</script>
+</body>
+</html>
