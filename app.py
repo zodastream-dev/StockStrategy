@@ -268,6 +268,6 @@ def test_email():
 
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5050))
+    port = 8080
     print(f"启动策略回测平台 http://0.0.0.0:{port}")
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
