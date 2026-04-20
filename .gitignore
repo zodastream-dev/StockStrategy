@@ -19,6 +19,8 @@ final_verify.py
 # 本地数据
 backtest*.json
 *.txt
+!runtime.txt
+
 mock_data.json
 
 # OS
