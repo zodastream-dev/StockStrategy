@@ -155,6 +155,42 @@
             display: flex;
             flex-direction: column;
             gap: 16px;
+            transition: width 0.3s ease, opacity 0.3s ease;
+            width: 340px;
+            flex-shrink: 0;
+        }
+
+        /* 左侧面板收起状态 */
+        .left-panel.collapsed {
+            width: 0;
+            overflow: hidden;
+            opacity: 0;
+            gap: 0;
+        }
+
+        /* 左侧面板展开按钮 */
+        .collapse-toggle {
+            position: fixed;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 100;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-left: none;
+            border-radius: 0 8px 8px 0;
+            color: var(--text-muted);
+            font-size: 14px;
+            padding: 10px 6px 10px 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            writing-mode: vertical-rl;
+            letter-spacing: 2px;
+        }
+        .collapse-toggle:hover {
+            background: var(--bg-card-hover);
+            color: var(--accent-light);
+            border-color: var(--accent);
         }
 
         /* 卡片 */
@@ -174,6 +210,45 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
+        }
+
+        /* Toggle Switch */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 40px;
+            height: 22px;
+            flex-shrink: 0;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            inset: 0;
+            background-color: #ccc;
+            transition: 0.3s;
+            border-radius: 22px;
+        }
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            height: 16px;
+            width: 16px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: var(--primary);
+        }
+        .toggle-switch input:checked + .toggle-slider::before {
+            transform: translateX(18px);
         }
 
         .card-title {
@@ -394,7 +469,13 @@
         @keyframes spin { to { transform: rotate(360deg); } }
 
         /* 右侧面板 */
-        .right-panel { display: flex; flex-direction: column; gap: 16px; }
+        .right-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            overflow-x: auto;   /* 内容超宽时显示横拉条 */
+            min-width: 0;
+        }
 
         /* KPI 指标卡 */
         .kpi-grid {
@@ -952,7 +1033,7 @@
         <!-- 主布局 -->
         <div class="main-grid">
             <!-- 左侧：配置面板 -->
-            <div class="left-panel">
+            <div class="left-panel" id="left-panel">
                 <!-- 策略选择 -->
                 <div class="card animate-in" style="animation-delay:0.05s">
                     <div class="card-header">
@@ -1016,6 +1097,43 @@
                         <button class="btn-small" onclick="toggleEmailConfig()" id="email-config-toggle">展开</button>
                     </div>
                     <div class="card-body" id="email-config-body" style="display:none;">
+                        <!-- 预警区 -->
+                        <div class="form-group" style="display:flex;align-items:center;gap:10px;padding:10px;background:#f0f4ff;border-radius:8px;margin-bottom:12px;">
+                            <label class="toggle-label" style="font-size:13px;flex:1;">
+                                📈 <strong>启动邮件通知</strong><br>
+                                <span style="font-size:11px;color:#888;">上证指数超过阈值时自动发邮件</span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="alert-toggle" onchange="saveAlertConfig()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+
+                        <div id="alert-panel" style="margin-bottom:12px;">
+                            <div class="form-group">
+                                <label class="form-label">通知邮箱</label>
+                                <input type="email" class="form-input" id="alert-email"
+                                       placeholder="notify@example.com" autocomplete="off"
+                                       style="font-size:13px;">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">触发阈值（点）</label>
+                                <input type="number" class="form-input" id="alert-threshold"
+                                       value="4000" min="0" step="100"
+                                       style="font-size:13px;">
+                            </div>
+                            <div class="form-group" style="display:flex;align-items:center;gap:8px;padding:8px;background:#fff;border:1px solid #e0e0e0;border-radius:6px;">
+                                <span style="font-size:13px;">📊 上证指数：</span>
+                                <span id="sh-index-price" style="font-size:15px;font-weight:bold;color:#c33;">加载中...</span>
+                                <span id="sh-index-change" style="font-size:12px;color:#888;margin-left:4px;"></span>
+                                <button class="btn btn-secondary" style="padding:3px 10px;font-size:11px;margin-left:auto;" onclick="checkAndAlert()">
+                                    检查并发送
+                                </button>
+                            </div>
+                            <div id="alert-status" style="font-size:12px;margin-top:4px;color:green;"></div>
+                        </div>
+
+                        <hr style="border:none;border-top:1px solid #e0e0e0;margin:12px 0;">
                         <div class="form-group">
                             <label class="form-label">发件邮箱</label>
                             <input type="email" class="form-input" id="email-sender"
@@ -1116,6 +1234,11 @@
             </div>
         </div>
 
+        <!-- 左侧面板收缩按钮 -->
+        <button class="collapse-toggle" id="collapse-btn" onclick="toggleLeftPanel()" title="收起/展开左侧面板">
+            ◀
+        </button>
+
         <footer>
             策略回测平台 · 数据来源：东方财富 · 仅供研究参考，不构成投资建议
         </footer>
@@ -1160,10 +1283,28 @@
         await loadStrategies();
         // 加载市场数据
         loadMarketOverview();
+        // 加载版本号
+        loadVersion();
+        // 加载预警配置
+        loadAlertConfig();
 
         // 股票搜索
         setupStockSearch();
     });
+
+    // ===================== 左侧面板收缩 =====================
+    function toggleLeftPanel() {
+        const panel = document.getElementById('left-panel');
+        const btn = document.getElementById('collapse-btn');
+        panel.classList.toggle('collapsed');
+        if (panel.classList.contains('collapsed')) {
+            btn.innerHTML = '▶';
+            btn.title = '展开左侧面板';
+        } else {
+            btn.innerHTML = '◀';
+            btn.title = '收起左侧面板';
+        }
+    }
 
     function formatDate(d) {
         return d.toISOString().split('T')[0];
@@ -1789,6 +1930,8 @@
                 <th>H股代码</th>
                 <th>H股名称</th>
                 <th>A股成交额(万元)</th>
+                <th>A股涨停时间</th>
+                <th>H股买入时间</th>
                 <th>H股成交量(股)</th>
                 <th>H股收盘价(HKD)</th>
                 <th>H股买入价(涨停后)</th>
@@ -1813,7 +1956,7 @@
         }
 
         if (!trades || trades.length === 0) {
-            const colspan = strategyId === 'ah_limit_up' ? 11 : 10;
+            const colspan = strategyId === 'ah_limit_up' ? 13 : 10;
             tbody.innerHTML = `<tr><td colspan="${colspan}" style="text-align:center;color:var(--text-muted);padding:30px;">暂无交易记录</td></tr>`;
             return;
         }
@@ -1826,6 +1969,8 @@
                     <td style="color:var(--accent-light)">${t.stock_code}</td>
                     <td style="color:var(--text-primary)">${t.stock_name || '-'}</td>
                     <td>${t.a_vol != null ? t.a_vol.toLocaleString() + '万' : '-'}</td>
+                    <td style="color:var(--danger);font-weight:500">${t.a_limitup_time ? t.a_limitup_time.substring(0,5) : '-'}</td>
+                    <td style="color:var(--warning);font-weight:500">${t.hk_buy_time ? t.hk_buy_time.substring(0,5) : '-'}</td>
                     <td>${t.hk_vol != null ? t.hk_vol.toLocaleString() : '-'}</td>
                     <td>${t.hk_close != null ? t.hk_close.toFixed(3) : '-'}</td>
                     <td style="color:var(--warning)">${t.hk_price_at_limitup != null ? t.hk_price_at_limitup.toFixed(3) : '-'}</td>
@@ -1859,6 +2004,19 @@
                 <td style="color:var(--text-muted);font-family:inherit;font-size:11px">${t.reason}</td>
             </tr>
         `).join('');
+    }
+
+
+    // ===================== 版本号 =====================
+    async function loadVersion() {
+        try {
+            const resp = await fetch('/api/version');
+            if (resp.ok) {
+                const data = await resp.json();
+                const badge = document.querySelector('.version-badge');
+                if (badge) badge.textContent = 'v' + data.version;
+            }
+        } catch (e) { /* 版本读取失败不影响主流程 */ }
     }
 
     // ===================== 市场概览 =====================
@@ -2046,7 +2204,126 @@
             statusEl.innerHTML = '<span class="email-error">网络错误</span>';
         }
     }
+
+    // ===================== 上证指数预警 =====================
+    let _shIndexTimer = null;
+
+    async function loadAlertConfig() {
+        try {
+            const resp = await fetch('/api/alert/config');
+            if (resp.ok) {
+                const data = await resp.json();
+                document.getElementById('alert-toggle').checked = data.enabled;
+                document.getElementById('alert-email').value = data.receiver_email || '';
+                document.getElementById('alert-threshold').value = data.threshold || 4000;
+                document.getElementById('alert-panel').style.opacity = data.enabled ? '1' : '0.5';
+            }
+        } catch (e) {}
+        loadSHIndex();
+    }
+
+    async function saveAlertConfig() {
+        const enabled = document.getElementById('alert-toggle').checked;
+        const receiver_email = document.getElementById('alert-email').value.trim();
+        const threshold = parseFloat(document.getElementById('alert-threshold').value) || 4000;
+
+        document.getElementById('alert-panel').style.opacity = enabled ? '1' : '0.5';
+
+        try {
+            await fetch('/api/alert/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled, receiver_email, threshold })
+            });
+        } catch (e) {}
+
+        if (enabled && receiver_email) {
+            startSHIndexPolling();
+        } else {
+            stopSHIndexPolling();
+        }
+    }
+
+    async function loadSHIndex() {
+        try {
+            const resp = await fetch('/api/alert/sh-index');
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data.price !== null) {
+                    const priceEl = document.getElementById('sh-index-price');
+                    priceEl.textContent = data.price.toFixed(2) + ' 点';
+                    priceEl.style.color = data.change_pct >= 0 ? '#c33' : '#2a2';
+                    const changeEl = document.getElementById('sh-index-change');
+                    const arrow = data.change_pct >= 0 ? '▲' : '▼';
+                    changeEl.textContent = `${arrow} ${data.change_pct}%`;
+                    changeEl.style.color = data.change_pct >= 0 ? '#c33' : '#2a2';
+                } else {
+                    document.getElementById('sh-index-price').textContent = '获取失败';
+                }
+            }
+        } catch (e) {
+            document.getElementById('sh-index-price').textContent = '获取失败';
+        }
+    }
+
+    function startSHIndexPolling() {
+        stopSHIndexPolling();
+        loadSHIndex();
+        _shIndexTimer = setInterval(loadSHIndex, 30000);
+    }
+
+    function stopSHIndexPolling() {
+        if (_shIndexTimer) {
+            clearInterval(_shIndexTimer);
+            _shIndexTimer = null;
+        }
+    }
+
+    async function checkAndAlert() {
+        const statusEl = document.getElementById('alert-status');
+        const enabled = document.getElementById('alert-toggle').checked;
+        const receiver_email = document.getElementById('alert-email').value.trim();
+
+        if (!enabled) {
+            statusEl.style.color = '#e67e22';
+            statusEl.textContent = '⚠ 请先开启邮件通知开关';
+            return;
+        }
+        if (!receiver_email) {
+            statusEl.style.color = '#e67e22';
+            statusEl.textContent = '⚠ 请填写通知邮箱';
+            return;
+        }
+
+        statusEl.style.color = 'var(--text-muted)';
+        statusEl.textContent = '⏳ 检查中...';
+
+        try {
+            const resp = await fetch('/api/alert/check', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            const data = await resp.json();
+
+            if (data.triggered) {
+                if (data.already_sent) {
+                    statusEl.style.color = '#e67e22';
+                    statusEl.textContent = `📧 ${data.message}`;
+                } else {
+                    statusEl.style.color = 'var(--success)';
+                    statusEl.textContent = `✅ 邮件已发送！上证指数 ${data.sh_price} 点`;
+                }
+            } else {
+                statusEl.style.color = '#888';
+                statusEl.textContent = `ℹ 上证指数 ${data.sh_price} 点，低于阈值 ${document.getElementById('alert-threshold').value} 点`;
+            }
+        } catch (e) {
+            statusEl.style.color = 'var(--danger)';
+            statusEl.textContent = '网络错误';
+        }
+    }
     </script>
-    <div class="version-badge">v1.0.2</div>
+    <div class="version-badge">v1.0.3</div>
 </body>
 </html>

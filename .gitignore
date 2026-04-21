@@ -24,6 +24,12 @@ mock_data.json
 .DS_Store
 Thumbs.db
 
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
 # 邮件配置（上线后会被环境变量覆盖）
 .env
 .env.local

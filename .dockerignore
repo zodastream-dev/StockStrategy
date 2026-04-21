@@ -1,0 +1,11 @@
+.git
+.gitignore
+*.pyc
+__pycache__
+.railway
+.railway.json
+railway.json
+*.md
+logs/
+*.log
+.DS_Store

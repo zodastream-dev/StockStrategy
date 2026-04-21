@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: strategy-platform
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: PYTHON_VERSION
+        value: "3.11"

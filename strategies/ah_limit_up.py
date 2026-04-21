@@ -261,6 +261,88 @@ class AHLimitUpStrategy(BaseStrategy):
         except Exception:
             return None
 
+    def _get_a_minute_bars(self, a_code: str, trade_date: str) -> list:
+        """
+        获取A股当日1分钟K线数据（东方财富接口）。
+        市场代码: 1=上海, 0=深圳
+        返回: [{'datetime': '...', 'open': float, 'close': float, ...}, ...]
+        失败返回空列表。
+        """
+        try:
+            # 判断交易所: 6开头=上海, 0/3开头=深圳
+            market = '1' if a_code.startswith('6') else '0'
+            secid = f"{market}.{a_code}"
+            date_str = trade_date.replace('-', '')  # 如 '20260417'
+
+            url = (
+                f"http://push2his.eastmoney.com/api/qt/stock/kline/get"
+                f"?fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6"
+                f"&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57%2Cf58%2Cf59%2Cf60%2Cf61"
+                f"&ut=7eea3edcaed734bea9cbfc24409ed989"
+                f"&klt=1&fqt=1&beg={date_str}&end={date_str}"
+                f"&secid={secid}"
+            )
+
+            session = requests.Session()
+            session.trust_env = False
+            resp = session.get(url, timeout=10)
+
+            if not resp.text.strip():
+                return []
+
+            data = json.loads(resp.text)
+            if data.get('data') is None:
+                return []
+
+            klines = data['data']['klines']
+            records = []
+            for k in klines:
+                parts = k.split(',')
+                # 格式: 日期时间, 开盘, 收盘, 最高, 最低, 成交量, 成交额
+                records.append({
+                    'datetime': parts[0],   # "2026-04-17 09:31:00"
+                    'time': (parts[0].split(' ')[1] + ':00')[:8],  # "09:31" → "09:31:00"
+                    'open': float(parts[1]),
+                    'close': float(parts[2]),
+                    'high': float(parts[3]),
+                    'low': float(parts[4]),
+                    'volume': float(parts[5]),
+                    'amount': float(parts[6]),
+                })
+            return records
+        except Exception:
+            return []
+
+    def _find_a_limitup_time(self, a_code: str, trade_date: str) -> tuple:
+        """
+        根据A股1分钟K线，找到涨停时刻（分钟K线首次涨幅>=9.9%的时间）。
+        返回: (涨停时间字符串 "HH:MM:SS", 涨停价格 float)
+        若无法获取数据，返回 ("10:30:00", None) 作为默认估算。
+        """
+        minute_bars = self._get_a_minute_bars(a_code, trade_date)
+        if not minute_bars:
+            return ("10:30:00", None)
+
+        prev_close = None
+        for bar in minute_bars:
+            if bar['time'] < "09:30:00":
+                prev_close = bar['close']
+                break
+
+        if prev_close is None or prev_close <= 0:
+            return ("10:30:00", None)
+
+        limitup_price = round(prev_close * 1.1, 2)  # 涨停价（估算）
+
+        # 找到第一根触及涨停价的K线（收盘价或最高价）
+        for bar in minute_bars:
+            if bar['time'] < "09:30:00":
+                continue
+            if bar['high'] >= limitup_price or bar['close'] >= limitup_price:
+                return (bar['time'], limitup_price)
+
+        return ("10:30:00", limitup_price)
+
     def _get_hk_minute_bars(self, hk_code: str, trade_date: str) -> list:
         """
         获取港股当日1分钟K线数据（东方财富接口）。
@@ -314,45 +396,45 @@ class AHLimitUpStrategy(BaseStrategy):
     def _find_hk_price_at_limitup(self, hk_code: str, trade_date: str,
                                    limitup_time: str = "10:30:00") -> tuple:
         """
-        根据A股涨停时刻（默认10:30），获取H股对应的1分钟K线收盘价。
-        即：A股涨停后最新的H股成交价。
+        根据A股涨停时刻，获取H股对应的1分钟K线收盘价和买入时间。
 
         参数:
             hk_code: 港股代码
             trade_date: 交易日期 YYYY-MM-DD
-            limitup_time: A股涨停估算时间，默认"10:30:00"
+            limitup_time: A股涨停时间，"HH:MM:SS"
 
         返回:
-            (价格, 来源描述, 1分钟K线列表)
-            - 优先用1分钟K线 >= limitup_time 那根K线的【收盘价】（即A股涨停后最新成交价）
+            (价格, 来源描述, 1分钟K线列表, H股买入时间字符串"HH:MM:SS")
+            - 优先用1分钟K线 >= limitup_time 那根K线的【收盘价】
             - 失败则用日线开盘价回退
         """
         # 1. 尝试获取1分钟K线
         minute_bars = self._get_hk_minute_bars(hk_code, trade_date)
 
         if minute_bars:
-            # 2. 找到 >= limitup_time 的第一根K线，取其【收盘价】（该分钟内最新成交价）
+            # 2. 找到 >= limitup_time 的第一根K线
             for bar in minute_bars:
-                # bar['datetime'] 格式: "2026-04-17 09:31:00"
                 bar_time = bar['datetime'].split(' ')[1]  # "09:31:00"
                 if bar_time >= limitup_time:
-                    price = round(bar['close'], 3)  # 取收盘价，代表该分钟内最新成交价
+                    price = round(bar['close'], 3)
                     source = f'1minK@{bar["datetime"][-8:]}'
-                    return price, source, minute_bars
+                    hk_buy_time = bar_time  # 这根K线的时间即H股买入时间
+                    return price, source, minute_bars, hk_buy_time
 
-            # 如果没有匹配的（数据只到10:30之前），取最后一根K线的收盘价
+            # 如果没有匹配的，取最后一根K线
             last_bar = minute_bars[-1]
             price = round(last_bar['close'], 3)
             source = f'1minK末@{last_bar["datetime"][-8:]}'
-            return price, source, minute_bars
+            hk_buy_time = last_bar['datetime'].split(' ')[1]
+            return price, source, minute_bars, hk_buy_time
 
         # 3. 回退：使用日线开盘价
         daily_data = self._get_hk_daily(hk_code, trade_date)
         if daily_data and daily_data['open'] > 0:
             price = round(daily_data['open'], 3)
-            return price, '日线开盘(回退)', []
+            return price, '日线开盘(回退)', [], limitup_time  # 回退时用涨停时间作为估算
 
-        return 0, '无数据', []
+        return 0, '无数据', [], limitup_time
 
     def run(self, stock_code: str, start_date: str, end_date: str, params: Dict) -> BacktestResult:
         """运行回测"""
@@ -392,9 +474,12 @@ class AHLimitUpStrategy(BaseStrategy):
                 if not hk_data or hk_data['open'] <= 0 or hk_data['close'] <= 0:
                     continue
 
-                # 获取涨停时H股价格（优先1分钟K线收盘价，回退日线开盘价）
-                hk_buy_price, price_source, _ = self._find_hk_price_at_limitup(
-                    hk_code, trade_date, limitup_time="10:30:00"
+                # 获取A股涨停时间（基于1分钟K线检测）
+                a_limitup_time, _ = self._find_a_limitup_time(a_code, trade_date)
+
+                # 获取涨停时H股价格和H股买入时间（优先1分钟K线，回退日线开盘价）
+                hk_buy_price, price_source, _, hk_buy_time = self._find_hk_price_at_limitup(
+                    hk_code, trade_date, limitup_time=a_limitup_time
                 )
 
                 # 获取H股实时股价（仅在今日有意义）
@@ -411,6 +496,8 @@ class AHLimitUpStrategy(BaseStrategy):
                     'hk_amount': hk_data.get('amount', 0),   # H股成交额（HKD）
                     'hk_close': hk_data['close'],            # H股收盘价
                     'hk_open': hk_data['open'],              # H股开盘价
+                    'a_limitup_time': a_limitup_time,        # A股涨停时间 "HH:MM:SS"
+                    'hk_buy_time': hk_buy_time,              # H股买入时间 "HH:MM:SS"
                     'hk_price_at_limitup': hk_buy_price,     # A股涨停后H股最新成交价（买入价）
                     'price_source': price_source,
                     'hk_realtime': hk_realtime,              # H股当前实时成交价
@@ -462,6 +549,8 @@ class AHLimitUpStrategy(BaseStrategy):
             closed_trade.hk_amount = r['hk_amount']
             closed_trade.hk_close = r['hk_close']
             closed_trade.hk_open = r['hk_open']
+            closed_trade.a_limitup_time = r.get('a_limitup_time')  # A股涨停时间
+            closed_trade.hk_buy_time = r.get('hk_buy_time')        # H股买入时间
             closed_trade.hk_price_at_limitup = r['hk_price_at_limitup']
             closed_trade.pnl_by_limitup_to_close = round(pnl_by_limitup_to_close * 100, 2)
             closed_trade.price_source = r.get('price_source', '未知')
@@ -533,6 +622,7 @@ class AHLimitUpStrategy(BaseStrategy):
                 monthly_returns[months[i]] = ret
 
         extra_keys = ['a_vol', 'hk_vol', 'hk_amount', 'hk_close', 'hk_open',
+                      'a_limitup_time', 'hk_buy_time',
                       'hk_price_at_limitup', 'pnl_by_limitup_to_close', 'price_source', 'hk_realtime']
 
         return BacktestResult(

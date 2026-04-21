@@ -1,6 +1,8 @@
 """
 策略回测平台 - Flask后端
 """
+__version__ = "1.0.3"
+
 import sys
 import io
 import os
@@ -137,6 +139,12 @@ def debug_charts():
 @app.route('/debug-adapter')
 def debug_adapter():
     return render_template('debug_adapter.html')
+
+
+@app.route('/api/version')
+def get_version():
+    """返回当前版本号"""
+    return jsonify({"version": __version__})
 
 
 @app.route('/api/strategies')
@@ -365,6 +373,124 @@ def test_email():
     )
 
     return jsonify(result)
+
+
+# ============================================================
+# 上证指数预警配置
+# ============================================================
+alert_config = {
+    'enabled': False,        # 是否启动预警
+    'receiver_email': '',    # 通知收件邮箱
+    'threshold': 4000,       # 触发阈值
+    'last_sent_time': None,  # 上次发送时间（防止重复发送）
+}
+
+
+@app.route('/api/alert/config', methods=['GET'])
+def get_alert_config():
+    """获取预警配置"""
+    return jsonify({
+        'enabled': alert_config['enabled'],
+        'receiver_email': alert_config['receiver_email'],
+        'threshold': alert_config['threshold'],
+    })
+
+
+@app.route('/api/alert/config', methods=['POST'])
+def set_alert_config():
+    """保存预警配置"""
+    data = request.get_json()
+    alert_config['enabled'] = bool(data.get('enabled', False))
+    alert_config['receiver_email'] = data.get('receiver_email', '').strip()
+    alert_config['threshold'] = float(data.get('threshold', 4000))
+    return jsonify({'success': True, 'message': '预警配置已保存'})
+
+
+@app.route('/api/alert/sh-index', methods=['GET'])
+def get_sh_index():
+    """获取上证指数当前点位"""
+    import akshare as ak
+    try:
+        df = ak.stock_zh_index_daily(symbol='sh000001')
+        if df is not None and not df.empty:
+            latest = df.iloc[-1]
+            prev = df.iloc[-2] if len(df) > 1 else latest
+            change = round((latest['close'] - prev['close']) / prev['close'] * 100, 2)
+            return jsonify({
+                'name': '上证指数',
+                'code': 'sh000001',
+                'price': round(latest['close'], 2),
+                'change_pct': change,
+                'date': str(latest.name)[:10] if hasattr(latest.name, '__str__') else str(latest.get('date', ''))[:10],
+            })
+    except Exception as e:
+        pass
+    return jsonify({'error': '获取上证指数失败', 'price': None})
+
+
+@app.route('/api/alert/check', methods=['POST'])
+def check_and_alert():
+    """检查上证指数，超过阈值则发送邮件"""
+    if not alert_config['enabled']:
+        return jsonify({'success': False, 'message': '预警未启用', 'triggered': False})
+
+    if not alert_config['receiver_email']:
+        return jsonify({'success': False, 'message': '未设置通知邮箱', 'triggered': False})
+
+    if not email_config['configured']:
+        return jsonify({'success': False, 'message': 'SMTP未配置', 'triggered': False})
+
+    # 获取上证指数
+    import akshare as ak
+    try:
+        df = ak.stock_zh_index_daily(symbol='sh000001')
+        if df is None or df.empty:
+            return jsonify({'success': False, 'message': '获取指数数据失败', 'triggered': False})
+        latest = df.iloc[-1]
+        sh_price = round(latest['close'], 2)
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取失败: {str(e)}', 'triggered': False})
+
+    triggered = sh_price >= alert_config['threshold']
+
+    if triggered:
+        # 防止重复发送（同一个交易日只发一次）
+        from datetime import datetime
+        today = datetime.now().strftime('%Y-%m-%d')
+        if alert_config['last_sent_time'] == today:
+            return jsonify({
+                'success': True,
+                'message': f'今日已发送过通知（{today}）',
+                'triggered': True,
+                'sh_price': sh_price,
+                'already_sent': True,
+            })
+
+        from .email_notifier import get_email_notifier
+        notifier = get_email_notifier()
+        result = notifier.send_email(
+            to_email=alert_config['receiver_email'],
+            subject=f'📈 上证指数预警 - 当前 {sh_price} 点',
+            html_content=f'''
+            <h2>📈 上证指数预警通知</h2>
+            <p><strong>触发时间：</strong>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            <p><strong>当前上证指数：</strong><span style="font-size:24px;color:#c33;font-weight:bold">{sh_price}</span></p>
+            <p><strong>预警阈值：</strong>{alert_config['threshold']} 点</p>
+            <p>上证指数已突破 <strong>{alert_config['threshold']}</strong> 点，当前为 <strong>{sh_price}</strong> 点，请关注市场动态。</p>
+            <hr>
+            <p style="color:#888;font-size:12px">此邮件由 A+H策略回测平台 自动发送，请勿回复。</p>
+            ''',
+        )
+        if result['success']:
+            alert_config['last_sent_time'] = today
+        return jsonify({**result, 'triggered': True, 'sh_price': sh_price})
+
+    return jsonify({
+        'success': True,
+        'message': f'上证指数 {sh_price} 点，未超过阈值 {alert_config["threshold"]}',
+        'triggered': False,
+        'sh_price': sh_price,
+    })
 
 
 if __name__ == '__main__':
