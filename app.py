@@ -14,13 +14,27 @@ app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
-# 注册策略
-from .strategies import BaseStrategy
-from .strategies.ah_limit_up import AHLimitUpStrategy
-from .strategies.technical_strategies import (
-    MACDCrossStrategy, BreakoutStrategy,
-    RSIOversoldStrategy, DualMAStrategy
-)
+# 注册策略（绝对导入，兼容 python app.py 直接运行）
+import importlib, sys as _sys
+# 将当前目录加入 sys.path，确保绝对导入可用
+_here = os.path.dirname(os.path.abspath(__file__))
+if _here not in _sys.path:
+    _sys.path.insert(0, _here)
+
+try:
+    from strategies import BaseStrategy
+    from strategies.ah_limit_up import AHLimitUpStrategy
+    from strategies.technical_strategies import (
+        MACDCrossStrategy, BreakoutStrategy,
+        RSIOversoldStrategy, DualMAStrategy
+    )
+except ImportError:
+    from .strategies import BaseStrategy
+    from .strategies.ah_limit_up import AHLimitUpStrategy
+    from .strategies.technical_strategies import (
+        MACDCrossStrategy, BreakoutStrategy,
+        RSIOversoldStrategy, DualMAStrategy
+    )
 
 STRATEGIES = {
     'ah_limit_up': AHLimitUpStrategy,
@@ -268,6 +282,6 @@ def test_email():
 
 
 if __name__ == '__main__':
-    port = 8080
+    port = int(os.environ.get('PORT', 5050))
     print(f"启动策略回测平台 http://0.0.0.0:{port}")
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
