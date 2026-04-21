@@ -1135,6 +1135,21 @@
 
                         <hr style="border:none;border-top:1px solid #e0e0e0;margin:12px 0;">
                         <div class="form-group">
+                            <label class="form-label">SMTP服务器</label>
+                            <input type="text" class="form-input" id="smtp-host"
+                                   value="smtp.qq.com" placeholder="smtp.qq.com" autocomplete="off">
+                        </div>
+                        <div class="form-group" style="display:flex;gap:8px;align-items:center;">
+                            <div style="flex:1;">
+                                <label class="form-label">SMTP端口</label>
+                                <input type="number" class="form-input" id="smtp-port"
+                                       value="465" placeholder="465" style="width:100%;">
+                            </div>
+                            <div style="flex:2;font-size:11px;color:var(--text-muted);padding-top:18px;">
+                                465=SSL &nbsp;|&nbsp; 587=STARTTLS
+                            </div>
+                        </div>
+                        <div class="form-group">
                             <label class="form-label">发件邮箱</label>
                             <input type="email" class="form-input" id="email-sender"
                                    placeholder="your_email@qq.com" autocomplete="off">
@@ -2140,6 +2155,8 @@
             const resp = await fetch('/api/email/config');
             const data = await resp.json();
             const statusEl = document.getElementById('email-status');
+            if (data.smtp_host) document.getElementById('smtp-host').value = data.smtp_host;
+            if (data.smtp_port) document.getElementById('smtp-port').value = data.smtp_port;
             if (data.configured) {
                 statusEl.innerHTML = '<span class="email-success">✓ SMTP已配置</span>';
             } else if (data.has_sender) {
@@ -2153,6 +2170,8 @@
     }
 
     async function saveEmailConfig() {
+        const host = document.getElementById('smtp-host').value.trim() || 'smtp.qq.com';
+        const port = parseInt(document.getElementById('smtp-port').value) || 465;
         const sender = document.getElementById('email-sender').value.trim();
         const password = document.getElementById('email-password').value.trim();
         const statusEl = document.getElementById('email-status');
@@ -2167,8 +2186,8 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    smtp_host: 'smtp.qq.com',
-                    smtp_port: 465,
+                    smtp_host: host,
+                    smtp_port: port,
                     sender_email: sender,
                     sender_password: password
                 })
