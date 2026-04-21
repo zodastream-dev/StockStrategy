@@ -1332,7 +1332,7 @@
         document.getElementById('stock-dropdown').classList.remove('show');
     }
 
-    // ===================== 回测运行 =====================
+    // ===================== 回测运行（异步轮询模式）=====================
     async function runBacktest() {
         const btn = document.getElementById('run-btn');
         const errorBanner = document.getElementById('error-banner');
@@ -1341,7 +1341,7 @@
 
         errorBanner.classList.remove('show');
         btn.disabled = true;
-        btn.innerHTML = '<span>⏳</span> 运行中...' ;
+        btn.innerHTML = '<span>⏳</span> 提交任务...' ;
         btn.classList.add('btn-loading');
 
         const payload = {
@@ -1353,27 +1353,48 @@
         };
 
         try {
+            // Step 1: 提交任务，立即返回 task_id
             const resp = await fetch('/api/backtest', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
+            const submitData = await resp.json();
 
-            const data = await resp.json();
-
-            if (data.error) {
-                showError(data.error + (data.trace ? '<br><small>' + data.trace.split('\n').slice(-3).join('<br>') + '</small>' : ''));
+            if (submitData.error) {
+                showError(submitData.error);
                 return;
             }
 
-            // 显示结果
+            const taskId = submitData.task_id;
+            btn.innerHTML = '<span>⏳</span> 运行中（0%）...' ;
+
+            // Step 2: 轮询任务状态
+            const result = await pollTask(taskId, (task) => {
+                // 每轮更新按钮文字
+                const pct = task.progress || 0;
+                btn.innerHTML = `<span>⏳</span> 运行中（${pct}%）... <small style="font-size:10px">${task.message || ''}</small>`;
+            });
+
+            // Step 3: 显示结果
+            if (result.status === 'error') {
+                showError(result.error || result.message);
+                return;
+            }
+
+            if (result.result && result.result.error) {
+                const err = result.result;
+                showError(err.error + (err.trace ? '<br><small>' + err.trace.split('\n').slice(-4).join('<br>') + '</small>' : ''));
+                return;
+            }
+
             emptySection.style.display = 'none';
             resultsSection.classList.add('visible');
             try {
-                renderResults(data);
+                renderResults(result.result || result);
             } catch (renderErr) {
                 console.error('renderResults error:', renderErr);
-                showError('渲染结果时出错: ' + renderErr.message + '<br><small>' + renderErr.stack?.split('\n').slice(0,3).join('<br>') + '</small>');
+                showError('渲染结果时出错: ' + renderErr.message);
             }
 
         } catch (e) {
@@ -1383,6 +1404,40 @@
             btn.innerHTML = '<span>▶</span> 运行回测';
             btn.classList.remove('btn-loading');
         }
+    }
+
+    // 轮询任务状态，直到完成或出错
+    async function pollTask(taskId, onProgress) {
+        const POLL_INTERVAL = 3000; // 3秒
+        const MAX_WAIT = 600000;     // 最多等10分钟
+        const start = Date.now();
+
+        while (Date.now() - start < MAX_WAIT) {
+            await new Promise(r => setTimeout(r, 2000)); // 初始等待2秒
+
+            try {
+                const resp = await fetch(`/api/backtest/status/${taskId}`);
+                if (!resp.ok) {
+                    if (resp.status === 404) {
+                        return { status: 'error', error: '任务不存在或已过期' };
+                    }
+                    continue;
+                }
+                const task = await resp.json();
+                onProgress && onProgress(task);
+
+                if (task.status === 'done') {
+                    return { status: 'done', result: task.result };
+                }
+                if (task.status === 'error') {
+                    return { status: 'error', error: task.error, trace: task.trace };
+                }
+                // pending / running: 继续轮询
+            } catch (e) {
+                // 网络抖动，等一轮
+            }
+        }
+        return { status: 'error', error: '任务超时（超过10分钟）' };
     }
 
     function showError(msg) {
@@ -1992,6 +2047,6 @@
         }
     }
     </script>
-    <div class="version-badge">v1.0.1</div>
+    <div class="version-badge">v1.0.2</div>
 </body>
 </html>

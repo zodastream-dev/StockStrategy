@@ -3,16 +3,88 @@
 """
 import sys
 import io
-from flask import Flask, render_template, request, jsonify
-from datetime import datetime, timedelta
-import json
 import os
+import json
+import uuid
+import time
+import traceback
+import threading
+from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from flask import Flask, render_template, request, jsonify
 
 # Flask会在请求处理时处理编码，这里不需要额外的stdout重定向
 
 app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+
+# ========== 异步任务管理器 ==========
+_executor = ThreadPoolExecutor(max_workers=3)
+
+class TaskManager:
+    """线程安全的异步任务管理器"""
+    def __init__(self, max_age_seconds=3600):
+        self._tasks = {}
+        self._lock = threading.Lock()
+        self._max_age = max_age_seconds
+
+    def submit(self, fn, *args, **kwargs) -> str:
+        task_id = uuid.uuid4().hex[:12]
+        task = {
+            'id': task_id,
+            'status': 'pending',   # pending | running | done | error
+            'progress': 0,
+            'message': '任务已提交',
+            'result': None,
+            'error': None,
+            'start_time': None,
+            'end_time': None,
+        }
+        with self._lock:
+            self._tasks[task_id] = task
+        # 在后台线程执行
+        _executor.submit(self._run, task_id, fn, args, kwargs)
+        return task_id
+
+    def _run(self, task_id, fn, args, kwargs):
+        with self._lock:
+            self._tasks[task_id]['status'] = 'running'
+            self._tasks[task_id]['start_time'] = time.time()
+            self._tasks[task_id]['message'] = '正在执行...'
+        try:
+            result = fn(*args, **kwargs)
+            with self._lock:
+                self._tasks[task_id]['status'] = 'done'
+                self._tasks[task_id]['progress'] = 100
+                self._tasks[task_id]['result'] = result
+                self._tasks[task_id]['message'] = '完成'
+                self._tasks[task_id]['end_time'] = time.time()
+        except Exception as e:
+            with self._lock:
+                self._tasks[task_id]['status'] = 'error'
+                self._tasks[task_id]['error'] = str(e)
+                self._tasks[task_id]['trace'] = traceback.format_exc()
+                self._tasks[task_id]['message'] = f'错误: {e}'
+                self._tasks[task_id]['end_time'] = time.time()
+        # 清理过期任务
+        self._cleanup()
+
+    def get(self, task_id: str) -> dict:
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task:
+                return dict(task)
+        return None
+
+    def _cleanup(self):
+        now = time.time()
+        expired = [k for k, v in self._tasks.items()
+                   if v['end_time'] and (now - v['end_time']) > self._max_age]
+        for k in expired:
+            del self._tasks[k]
+
+_task_manager = TaskManager()
 
 # 注册策略（绝对导入，兼容 python app.py 直接运行）
 import importlib, sys as _sys
@@ -125,9 +197,19 @@ def get_ah_mapping():
         return jsonify({'stocks': [], 'error': str(e)})
 
 
+def _do_backtest(strategy_id: str, stock_code: str, start_date: str, end_date: str, params: dict):
+    """后台执行回测的函数"""
+    strategy_cls = STRATEGIES[strategy_id]
+    strategy = strategy_cls(initial_capital=100000)
+    result = strategy.run(stock_code, start_date, end_date, params)
+    if isinstance(result, dict):
+        return result
+    return result.to_dict()
+
+
 @app.route('/api/backtest', methods=['POST'])
 def run_backtest():
-    """运行回测"""
+    """提交回测任务（异步，立即返回 task_id）"""
     data = request.get_json()
     strategy_id = data.get('strategy_id', '')
     stock_code = data.get('stock_code', '')
@@ -139,21 +221,25 @@ def run_backtest():
         return jsonify({'error': f'未知策略: {strategy_id}'}), 400
 
     if not start_date or not end_date:
-        # 默认最近1个月
         end_date = datetime.now().strftime('%Y-%m-%d')
         start_date = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
 
-    try:
-        strategy_cls = STRATEGIES[strategy_id]
-        strategy = strategy_cls(initial_capital=100000)
-        result = strategy.run(stock_code, start_date, end_date, params)
-        # A+H策略已直接返回 dict，其他策略返回 BacktestResult
-        if isinstance(result, dict):
-            return jsonify(result)
-        return jsonify(result.to_dict())
-    except Exception as e:
-        import traceback
-        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+    task_id = _task_manager.submit(
+        _do_backtest, strategy_id, stock_code, start_date, end_date, params
+    )
+    return jsonify({
+        'task_id': task_id,
+        'message': '任务已提交，请通过 /api/backtest/status/<task_id> 查询结果'
+    })
+
+
+@app.route('/api/backtest/status/<task_id>')
+def backtest_status(task_id: str):
+    """查询回测任务状态"""
+    task = _task_manager.get(task_id)
+    if task is None:
+        return jsonify({'error': '任务不存在或已过期'}), 404
+    return jsonify(task)
 
 
 @app.route('/api/stock-info')
