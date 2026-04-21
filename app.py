@@ -365,7 +365,10 @@ alert_config = _config['alert']
 
 # 启动时初始化邮件通知器（如果环境变量已配置）
 if _email_config.get('sender_email') and _email_config.get('sender_password'):
-    from .email_notifier import init_email_notifier
+    try:
+        from strategy_platform.email_notifier import init_email_notifier
+    except (ImportError, ModuleNotFoundError):
+        from email_notifier import init_email_notifier
     init_email_notifier(
         smtp_host=_email_config['smtp_host'],
         smtp_port=_email_config['smtp_port'],
@@ -397,7 +400,7 @@ def set_email_config():
     _email_config['sender_password'] = data.get('sender_password', '')
 
     if _email_config['sender_email'] and _email_config['sender_password']:
-        from .email_notifier import init_email_notifier
+        from strategy_platform.email_notifier import init_email_notifier
         init_email_notifier(
             smtp_host=_email_config['smtp_host'],
             smtp_port=_email_config['smtp_port'],
@@ -425,7 +428,7 @@ def test_email():
     if not _email_config.get('sender_email') or not _email_config.get('sender_password'):
         return jsonify({'success': False, 'message': '请先配置SMTP信息'})
 
-    from .email_notifier import get_email_notifier
+    from strategy_platform.email_notifier import get_email_notifier
     notifier = get_email_notifier()
 
     result = notifier.send_email(
@@ -540,7 +543,7 @@ def check_and_alert():
                 'already_sent': True,
             })
 
-        from .email_notifier import get_email_notifier
+        from strategy_platform.email_notifier import get_email_notifier
         notifier = get_email_notifier()
         result = notifier.send_email(
             to_email=alert_config['receiver_email'],
