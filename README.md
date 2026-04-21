@@ -61,5 +61,5 @@ python app.py
 
 - **后端**：Flask + akshare
 - **前端**：原生 HTML/CSS/JS + Chart.js
-- **部署**：Railway (Python web service)
+- **部署**：Railway (Python web service) - v1.0.1
 - **数据**：东方财富、同花顺等免费数据接口
