@@ -1,9 +1,12 @@
 """
 邮件通知模块
-支持QQ邮箱、163邮箱等SMTP服务
+支持 SMTP（本地）和 SendGrid HTTP API（Railway等云环境）
 """
 import smtplib
 import os
+import urllib.request
+import urllib.parse
+import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
@@ -14,20 +17,23 @@ class EmailNotifier:
     """邮件通知器"""
 
     def __init__(self, smtp_host: str = None, smtp_port: int = 465,
-                 sender_email: str = None, sender_password: str = None):
+                 sender_email: str = None, sender_password: str = None,
+                 sendgrid_api_key: str = None):
         self.smtp_host = smtp_host or os.environ.get('SMTP_HOST', 'smtp.qq.com')
         self.smtp_port = smtp_port
         self.sender_email = sender_email or os.environ.get('SMTP_EMAIL')
         self.sender_password = sender_password or os.environ.get('SMTP_PASSWORD')
+        # SendGrid 优先（SMTP在云环境不通）
+        self.sendgrid_api_key = sendgrid_api_key or os.environ.get('SENDGRID_API_KEY')
 
     def is_configured(self) -> bool:
-        """检查是否已配置"""
-        return bool(self.sender_email and self.sender_password)
+        """检查是否已配置（SendGrid优先，否则SMTP）"""
+        return bool(self.sendgrid_api_key) or bool(self.sender_email and self.sender_password)
 
     def send_email(self, to_email: str, subject: str, html_content: str,
                    sender_name: str = "A+H策略平台") -> dict:
         """
-        发送邮件
+        发送邮件（SendGrid优先，云环境走HTTP API；SMTP兜底用于本地）
 
         Args:
             to_email: 收件人邮箱
@@ -39,31 +45,65 @@ class EmailNotifier:
             dict: {'success': True/False, 'message': str}
         """
         if not self.is_configured():
-            return {'success': False, 'message': '邮件服务未配置，请先设置SMTP信息'}
+            return {'success': False, 'message': '邮件服务未配置，请先设置SMTP信息或SendGrid API Key'}
 
+        # 优先使用 SendGrid HTTP API（云环境推荐）
+        if self.sendgrid_api_key:
+            return self._send_via_sendgrid(to_email, subject, html_content, sender_name)
+
+        # SMTP 兜底（本地开发用）
+        return self._send_via_smtp(to_email, subject, html_content, sender_name)
+
+    def _send_via_sendgrid(self, to_email: str, subject: str, html_content: str,
+                           sender_name: str = "A+H策略平台") -> dict:
+        """通过 SendGrid Web API 发送邮件"""
+        import ssl as ssl_module
+        url = 'https://api.sendgrid.com/v3/mail/send'
+        payload = {
+            'personalizations': [{'to': [{'email': to_email}]}],
+            'from': {'email': self.sender_email, 'name': sender_name},
+            'subject': subject,
+            'content': [{'type': 'text/html', 'value': html_content}]
+        }
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(
+            url, data=data,
+            headers={
+                'Authorization': f'Bearer {self.sendgrid_api_key}',
+                'Content-Type': 'application/json'
+            },
+            method='POST'
+        )
         try:
-            # 创建邮件
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                # SendGrid 202 = 成功
+                return {'success': True, 'message': f'邮件已发送至 {to_email}（SendGrid）'}
+        except urllib.error.HTTPError as e:
+            body = e.read().decode('utf-8', errors='replace')
+            return {'success': False, 'message': f'SendGrid错误 {e.code}: {body[:200]}'}
+        except Exception as e:
+            return {'success': False, 'message': f'SendGrid发送失败: {str(e)}'}
+
+    def _send_via_smtp(self, to_email: str, subject: str, html_content: str,
+                       sender_name: str = "A+H策略平台") -> dict:
+        """通过 SMTP 发送邮件（本地用）"""
+        import ssl as ssl_module
+        try:
             msg = MIMEMultipart('alternative')
             msg['From'] = Header(f"{sender_name} <{self.sender_email}>")
             msg['To'] = Header(to_email)
             msg['Subject'] = Header(subject, 'utf-8')
-
-            # 添加HTML内容
             html_part = MIMEText(html_content, 'html', 'utf-8')
             msg.attach(html_part)
 
-            # 发送邮件 - 根据端口选择连接方式
-            import ssl as ssl_module
-            timeout = 15  # 15秒超时
+            timeout = 15
             if self.smtp_port == 465:
-                # 端口465使用隐式SSL
                 context = ssl_module.create_default_context()
                 with smtplib.SMTP_SSL(self.smtp_host, self.smtp_port,
                                       context=context, timeout=timeout) as server:
                     server.login(self.sender_email, self.sender_password)
                     server.sendmail(self.sender_email, [to_email], msg.as_string())
             else:
-                # 其他端口（587等）使用STARTTLS显式TLS
                 with smtplib.SMTP(self.smtp_host, self.smtp_port,
                                   timeout=timeout) as server:
                     server.starttls()
@@ -175,8 +215,10 @@ def get_email_notifier() -> EmailNotifier:
 
 
 def init_email_notifier(smtp_host: str = None, smtp_port: int = 465,
-                       sender_email: str = None, sender_password: str = None) -> EmailNotifier:
+                       sender_email: str = None, sender_password: str = None,
+                       sendgrid_api_key: str = None) -> EmailNotifier:
     """初始化邮件通知器"""
     global _email_notifier
-    _email_notifier = EmailNotifier(smtp_host, smtp_port, sender_email, sender_password)
+    _email_notifier = EmailNotifier(smtp_host, smtp_port, sender_email, sender_password,
+                                    sendgrid_api_key)
     return _email_notifier

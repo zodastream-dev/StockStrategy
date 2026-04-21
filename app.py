@@ -371,17 +371,18 @@ _email_config = _config['email']
 alert_config = _config['alert']
 
 
-# 启动时初始化邮件通知器（如果环境变量已配置）
-if _email_config.get('sender_email') and _email_config.get('sender_password'):
+# 启动时初始化邮件通知器（SendGrid优先，SMTP兜底）
+if _email_config.get('sender_email'):
     try:
         from email_notifier import init_email_notifier
     except (ImportError, ModuleNotFoundError):
         from strategy_platform.email_notifier import init_email_notifier
     init_email_notifier(
-        smtp_host=_email_config['smtp_host'],
-        smtp_port=_email_config['smtp_port'],
-        sender_email=_email_config['sender_email'],
-        sender_password=_email_config['sender_password']
+        smtp_host=_email_config.get('smtp_host'),
+        smtp_port=_email_config.get('smtp_port', 465),
+        sender_email=_email_config.get('sender_email'),
+        sender_password=_email_config.get('sender_password'),
+        sendgrid_api_key=os.environ.get('SENDGRID_API_KEY')
     )
 
 
@@ -413,10 +414,11 @@ def set_email_config():
         except (ImportError, ModuleNotFoundError):
             from strategy_platform.email_notifier import init_email_notifier
         init_email_notifier(
-            smtp_host=_email_config['smtp_host'],
-            smtp_port=_email_config['smtp_port'],
-            sender_email=_email_config['sender_email'],
-            sender_password=_email_config['sender_password']
+            smtp_host=_email_config.get('smtp_host'),
+            smtp_port=_email_config.get('smtp_port', 465),
+            sender_email=_email_config.get('sender_email'),
+            sender_password=_email_config.get('sender_password'),
+            sendgrid_api_key=os.environ.get('SENDGRID_API_KEY')
         )
         _email_config['configured'] = True
     else:
@@ -424,7 +426,7 @@ def set_email_config():
 
     # 持久化（不保存密码到文件，仅环境变量方式）
     _save_config({'email': _email_config, 'alert': alert_config})
-    return jsonify({'success': True, 'message': '邮件配置已保存'})
+    return jsonify({'success': True, 'message': '邮件配置已保存（SendGrid优先，SMTP兜底）'})
 
 
 @app.route('/api/email/test', methods=['POST'])
