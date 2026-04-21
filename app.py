@@ -298,51 +298,119 @@ def market_overview():
         return jsonify({'error': str(e)})
 
 
-# 邮件配置存储（生产环境建议使用数据库）
-email_config = {
-    'smtp_host': 'smtp.qq.com',
-    'smtp_port': 465,
-    'sender_email': '',
-    'sender_password': '',
-    'configured': False
+
+# ============================================================
+# 持久化配置（JSON 文件，支持环境变量覆盖）
+# ============================================================
+import json as _json
+
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config.json')
+
+# 环境变量优先（Railway 部署时用环境变量更安全）
+_default_email_config = {
+    'smtp_host': os.environ.get('SMTP_HOST', 'smtp.qq.com'),
+    'smtp_port': int(os.environ.get('SMTP_PORT', 465)),
+    'sender_email': os.environ.get('SMTP_EMAIL', ''),
+    'sender_password': os.environ.get('SMTP_PASSWORD', ''),
 }
+
+
+def _load_persistent_config():
+    """从 JSON 文件加载配置，环境变量优先级最高"""
+    defaults = {
+        'email': _default_email_config.copy(),
+        'alert': {
+            'enabled': False,
+            'receiver_email': '',
+            'threshold': 4000,
+            'last_sent_time': None,
+        }
+    }
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                saved = _json.load(f)
+            # 合并：文件有则用文件，否则用环境变量/默认值
+            for key in ['email', 'alert']:
+                if key in saved:
+                    defaults[key].update(saved[key])
+        except Exception:
+            pass
+    # 环境变量永远覆盖文件（适合 Railway 部署）
+    if os.environ.get('SMTP_EMAIL'):
+        defaults['email']['sender_email'] = os.environ['SMTP_EMAIL']
+    if os.environ.get('SMTP_PASSWORD'):
+        defaults['email']['sender_password'] = os.environ['SMTP_PASSWORD']
+    if os.environ.get('SMTP_HOST'):
+        defaults['email']['smtp_host'] = os.environ['SMTP_HOST']
+    if os.environ.get('SMTP_PORT'):
+        defaults['email']['smtp_port'] = int(os.environ['SMTP_PORT'])
+    return defaults
+
+
+def _save_config(data: dict):
+    """保存配置到 JSON 文件"""
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            _json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"配置保存失败: {e}")
+
+
+# 全局配置（启动时从文件加载）
+_config = _load_persistent_config()
+_email_config = _config['email']
+alert_config = _config['alert']
+
+
+# 启动时初始化邮件通知器（如果环境变量已配置）
+if _email_config.get('sender_email') and _email_config.get('sender_password'):
+    from .email_notifier import init_email_notifier
+    init_email_notifier(
+        smtp_host=_email_config['smtp_host'],
+        smtp_port=_email_config['smtp_port'],
+        sender_email=_email_config['sender_email'],
+        sender_password=_email_config['sender_password']
+    )
 
 
 @app.route('/api/email/config', methods=['GET'])
 def get_email_config():
     """获取邮件配置状态"""
     return jsonify({
-        'configured': email_config['configured'],
-        'has_sender': bool(email_config['sender_email']),
-        'smtp_host': email_config['smtp_host'],
-        'smtp_port': email_config['smtp_port'],
+        'configured': bool(_email_config.get('sender_email') and _email_config.get('sender_password')),
+        'has_sender': bool(_email_config.get('sender_email')),
+        'smtp_host': _email_config.get('smtp_host'),
+        'smtp_port': _email_config.get('smtp_port'),
     })
 
 
 @app.route('/api/email/config', methods=['POST'])
 def set_email_config():
     """设置邮件配置"""
+    global _email_config
     data = request.get_json()
 
-    email_config['smtp_host'] = data.get('smtp_host', 'smtp.qq.com')
-    email_config['smtp_port'] = data.get('smtp_port', 465)
-    email_config['sender_email'] = data.get('sender_email', '')
-    email_config['sender_password'] = data.get('sender_password', '')
+    _email_config['smtp_host'] = data.get('smtp_host', 'smtp.qq.com')
+    _email_config['smtp_port'] = int(data.get('smtp_port', 465))
+    _email_config['sender_email'] = data.get('sender_email', '')
+    _email_config['sender_password'] = data.get('sender_password', '')
 
-    if email_config['sender_email'] and email_config['sender_password']:
-        # 初始化邮件通知器
+    if _email_config['sender_email'] and _email_config['sender_password']:
         from .email_notifier import init_email_notifier
         init_email_notifier(
-            smtp_host=email_config['smtp_host'],
-            smtp_port=email_config['smtp_port'],
-            sender_email=email_config['sender_email'],
-            sender_password=email_config['sender_password']
+            smtp_host=_email_config['smtp_host'],
+            smtp_port=_email_config['smtp_port'],
+            sender_email=_email_config['sender_email'],
+            sender_password=_email_config['sender_password']
         )
-        email_config['configured'] = True
-        return jsonify({'success': True, 'message': '邮件配置已保存'})
+        _email_config['configured'] = True
     else:
-        email_config['configured'] = False
-        return jsonify({'success': False, 'message': '请填写完整信息'})
+        _email_config['configured'] = False
+
+    # 持久化（不保存密码到文件，仅环境变量方式）
+    _save_config({'email': _email_config, 'alert': alert_config})
+    return jsonify({'success': True, 'message': '邮件配置已保存'})
 
 
 @app.route('/api/email/test', methods=['POST'])
@@ -354,7 +422,7 @@ def test_email():
     if not test_email_addr:
         return jsonify({'success': False, 'message': '请提供测试邮箱地址'})
 
-    if not email_config['configured']:
+    if not _email_config.get('sender_email') or not _email_config.get('sender_password'):
         return jsonify({'success': False, 'message': '请先配置SMTP信息'})
 
     from .email_notifier import get_email_notifier
@@ -375,15 +443,10 @@ def test_email():
     return jsonify(result)
 
 
+
 # ============================================================
-# 上证指数预警配置
+# 上证指数预警配置（已通过 _config 全局变量加载，无需重复定义）
 # ============================================================
-alert_config = {
-    'enabled': False,        # 是否启动预警
-    'receiver_email': '',    # 通知收件邮箱
-    'threshold': 4000,       # 触发阈值
-    'last_sent_time': None,  # 上次发送时间（防止重复发送）
-}
 
 
 @app.route('/api/alert/config', methods=['GET'])
@@ -399,11 +462,22 @@ def get_alert_config():
 @app.route('/api/alert/config', methods=['POST'])
 def set_alert_config():
     """保存预警配置"""
+    global alert_config
     data = request.get_json()
     alert_config['enabled'] = bool(data.get('enabled', False))
     alert_config['receiver_email'] = data.get('receiver_email', '').strip()
     alert_config['threshold'] = float(data.get('threshold', 4000))
+    # 持久化到文件（不含 last_sent_time）
+    save_data = {'email': {k: v for k, v in _email_config.items()}, 'alert': {
+        'enabled': alert_config['enabled'],
+        'receiver_email': alert_config['receiver_email'],
+        'threshold': alert_config['threshold'],
+        'last_sent_time': alert_config.get('last_sent_time'),
+    }}
+    _save_config(save_data)
     return jsonify({'success': True, 'message': '预警配置已保存'})
+
+
 
 
 @app.route('/api/alert/sh-index', methods=['GET'])
@@ -437,7 +511,7 @@ def check_and_alert():
     if not alert_config['receiver_email']:
         return jsonify({'success': False, 'message': '未设置通知邮箱', 'triggered': False})
 
-    if not email_config['configured']:
+    if not _email_config.get('sender_email') or not _email_config.get('sender_password'):
         return jsonify({'success': False, 'message': 'SMTP未配置', 'triggered': False})
 
     # 获取上证指数
