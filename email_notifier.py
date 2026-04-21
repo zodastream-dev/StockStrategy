@@ -52,10 +52,23 @@ class EmailNotifier:
             html_part = MIMEText(html_content, 'html', 'utf-8')
             msg.attach(html_part)
 
-            # 发送邮件
-            with smtplib.SMTP_SSL(self.smtp_host, self.smtp_port) as server:
-                server.login(self.sender_email, self.sender_password)
-                server.sendmail(self.sender_email, [to_email], msg.as_string())
+            # 发送邮件 - 根据端口选择连接方式
+            import ssl as ssl_module
+            timeout = 15  # 15秒超时
+            if self.smtp_port == 465:
+                # 端口465使用隐式SSL
+                context = ssl_module.create_default_context()
+                with smtplib.SMTP_SSL(self.smtp_host, self.smtp_port,
+                                      context=context, timeout=timeout) as server:
+                    server.login(self.sender_email, self.sender_password)
+                    server.sendmail(self.sender_email, [to_email], msg.as_string())
+            else:
+                # 其他端口（587等）使用STARTTLS显式TLS
+                with smtplib.SMTP(self.smtp_host, self.smtp_port,
+                                  timeout=timeout) as server:
+                    server.starttls()
+                    server.login(self.sender_email, self.sender_password)
+                    server.sendmail(self.sender_email, [to_email], msg.as_string())
 
             return {'success': True, 'message': f'邮件已发送至 {to_email}'}
 
@@ -63,6 +76,14 @@ class EmailNotifier:
             return {'success': False, 'message': '邮箱认证失败，请检查SMTP密码/授权码'}
         except smtplib.SMTPRecipientsRefused:
             return {'success': False, 'message': '收件人邮箱地址无效'}
+        except smtplib.SMTPServerDisconnected:
+            return {'success': False, 'message': 'SMTP连接意外断开，请检查网络或SMTP配置'}
+        except smtplib.SMTPConnectError:
+            return {'success': False, 'message': '无法连接到SMTP服务器，请检查主机地址和端口'}
+        except TimeoutError:
+            return {'success': False, 'message': 'SMTP连接超时，请检查网络连接'}
+        except ssl_module.SSLError as e:
+            return {'success': False, 'message': f'SSL错误: {str(e)}'}
         except smtplib.SMTPException as e:
             return {'success': False, 'message': f'SMTP错误: {str(e)}'}
         except Exception as e:
