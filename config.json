@@ -1,0 +1,15 @@
+{
+  "email": {
+    "smtp_host": "smtp.mxhichina.com",
+    "smtp_port": 465,
+    "sender_email": "junlu@yookeer.com",
+    "sender_password": "Zodastream1",
+    "configured": true
+  },
+  "alert": {
+    "enabled": true,
+    "receiver_email": "",
+    "threshold": 4000.0,
+    "last_sent_time": null
+  }
+}
