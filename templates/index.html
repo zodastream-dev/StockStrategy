@@ -769,6 +769,25 @@
             font-size: 12px;
         }
 
+        /* 版本号角标 */
+        .version-badge {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            background: rgba(0, 0, 0, 0.45);
+            color: rgba(255, 255, 255, 0.75);
+            font-size: 11px;
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            padding: 4px 10px;
+            border-radius: 20px;
+            letter-spacing: 0.5px;
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            z-index: 9999;
+            pointer-events: none;
+            user-select: none;
+        }
+
         /* ==================== 配置弹窗 ==================== */
         .modal-overlay {
             position: fixed;
@@ -1973,5 +1992,6 @@
         }
     }
     </script>
+    <div class="version-badge">v1.0.0</div>
 </body>
 </html>
