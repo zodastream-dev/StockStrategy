@@ -306,6 +306,90 @@ def market_overview():
         return jsonify({'error': str(e)})
 
 
+# 监控港股列表
+HK_WATCH_LIST = [
+    {'code': '03690', 'name': '美团'},
+    {'code': '09988', 'name': '阿里巴巴'},
+    {'code': '06669', 'name': '胜宏科技'},
+    {'code': '09992', 'name': '泡泡玛特'},
+    {'code': '02589', 'name': '沪上阿姨'},
+]
+
+@app.route('/api/hk-stocks')
+def get_hk_stocks():
+    """获取港股实时行情（监控列表）"""
+    import akshare as ak
+    result = []
+
+    # 方案1：用 stock_hk_spot_em 批量获取实时行情（Railway环境可用）
+    try:
+        df = ak.stock_hk_spot_em()
+        col_code = df.columns[1]
+        col_name = df.columns[2]
+        # 列名映射（东方财富港股字段）
+        col_map = {c: i for i, c in enumerate(df.columns)}
+
+        codes = [s['code'] for s in HK_WATCH_LIST]
+        code_name_map = {s['code']: s['name'] for s in HK_WATCH_LIST}
+
+        df['_code5'] = df[col_code].astype(str).str.zfill(5)
+        matched = df[df['_code5'].isin(codes)].copy()
+
+        for _, row in matched.iterrows():
+            code5 = str(row[col_code]).zfill(5)
+            # 东方财富港股实时列：序号/代码/名称/最新价/涨跌额/涨跌幅/今开/最高/最低/昨收/成交量/成交额
+            try:
+                price = float(row.iloc[3])   # 最新价
+                prev_close = float(row.iloc[9])   # 昨收
+                change_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else 0
+            except Exception:
+                price = None
+                change_pct = 0
+            result.append({
+                'code': code5,
+                'name': code_name_map.get(code5, row[col_name]),
+                'price': round(price, 3) if price else None,
+                'change_pct': change_pct,
+                'source': 'realtime',
+            })
+
+        # 按监控列表顺序排序
+        order = {s['code']: i for i, s in enumerate(HK_WATCH_LIST)}
+        result.sort(key=lambda x: order.get(x['code'], 99))
+
+        if result:
+            return jsonify({'stocks': result})
+    except Exception:
+        pass
+
+    # 方案2：逐只用 stock_hk_daily 取最新收盘（兜底）
+    for stock in HK_WATCH_LIST:
+        try:
+            df = ak.stock_hk_daily(symbol=stock['code'], adjust="")
+            if df is not None and not df.empty:
+                latest = df.iloc[-1]
+                prev = df.iloc[-2] if len(df) > 1 else latest
+                price = float(latest['close'])
+                prev_close = float(prev['close'])
+                change_pct = round((price - prev_close) / prev_close * 100, 2)
+                result.append({
+                    'code': stock['code'],
+                    'name': stock['name'],
+                    'price': round(price, 3),
+                    'change_pct': change_pct,
+                    'source': 'daily',
+                })
+        except Exception:
+            result.append({
+                'code': stock['code'],
+                'name': stock['name'],
+                'price': None,
+                'change_pct': 0,
+                'source': 'error',
+            })
+
+    return jsonify({'stocks': result})
+
 
 # ============================================================
 # 持久化配置（JSON 文件，支持环境变量覆盖）
