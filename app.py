@@ -1,7 +1,7 @@
 """
 策略回测平台 - Flask后端
 """
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 import sys
 import io
