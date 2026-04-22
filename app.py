@@ -322,16 +322,63 @@ _HK_CACHE_TTL = 3  # 秒
 def _fetch_hk_realtime():
     """
     尝试获取港股实时行情，依次：
-      1. akshare stock_hk_spot_em（东方财富，最新价 iloc[3]）
-      2. 腾讯实时接口 https://qt.gtimg.cn/q=r_hk{code}
+      1. 腾讯实时接口 https://qt.gtimg.cn/q=r_hk{code}（最可靠、最快）
+      2. akshare stock_hk_spot_em（东方财富兜底）
     返回 list[dict] 或 None（全部失败）
     """
     import akshare as ak
+    import urllib.request
+    import ssl
 
     codes = [s['code'] for s in HK_WATCH_LIST]
     code_name_map = {s['code']: s['name'] for s in HK_WATCH_LIST}
 
-    # ---- 方案1：东方财富批量实时 ----
+    # ---- 方案1：腾讯实时接口（最可靠，稳定无代理限制）----
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        result = []
+        for stock in HK_WATCH_LIST:
+            url = f"https://qt.gtimg.cn/q=r_hk{stock['code']}"
+            try:
+                with urllib.request.urlopen(url, timeout=5, context=ctx) as resp:
+                    raw = resp.read().decode('gbk', errors='replace')
+                # 格式：v_r_hk03690="1~美团~03690~140.20~140.60~..."
+                # 字段：0=type,1=名称,2=代码,3=当前价,4=昨收,...
+                parts = raw.split('~')
+                if len(parts) > 4:
+                    price = float(parts[3])
+                    prev_close = float(parts[4])
+                    change_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else 0
+                    result.append({
+                        'code': stock['code'],
+                        'name': stock['name'],
+                        'price': round(price, 3),
+                        'change_pct': change_pct,
+                        'source': 'realtime',
+                    })
+                else:
+                    raise ValueError(f'数据格式异常: {raw[:80]}')
+            except Exception as e2:
+                app.logger.warning(f"腾讯接口 {stock['code']} 失败: {e2}")
+                result.append({
+                    'code': stock['code'],
+                    'name': stock['name'],
+                    'price': None,
+                    'change_pct': 0,
+                    'source': 'error',
+                })
+
+        if any(s['price'] is not None for s in result):
+            order = {s['code']: i for i, s in enumerate(HK_WATCH_LIST)}
+            result.sort(key=lambda x: order.get(x['code'], 99))
+            return result
+    except Exception as e:
+        app.logger.warning(f'腾讯实时接口失败: {e}')
+
+    # ---- 方案2：东方财富批量实时 ----
     try:
         df = ak.stock_hk_spot_em()
         col_code = df.columns[1]
@@ -358,52 +405,12 @@ def _fetch_hk_realtime():
                 'source': 'realtime',
             })
 
-        if len(result) == len(codes):
-            # 全部匹配到，按监控列表排序
+        if len(result) >= len(codes):
             order = {s['code']: i for i, s in enumerate(HK_WATCH_LIST)}
             result.sort(key=lambda x: order.get(x['code'], 99))
             return result
     except Exception as e:
         app.logger.warning(f'stock_hk_spot_em failed: {e}')
-
-    # ---- 方案2：腾讯实时接口（逐只查询） ----
-    try:
-        import urllib.request
-        result = []
-        for stock in HK_WATCH_LIST:
-            url = f"https://qt.gtimg.cn/q=r_hk{stock['code']}"
-            try:
-                with urllib.request.urlopen(url, timeout=3) as resp:
-                    raw = resp.read().decode('gbk', errors='replace')
-                # 格式：v_r_hk03690="1~美团~03690~140.20~140.60~..."
-                # 字段索引（~分割）：0=type,1=名称,2=代码,3=当前价,4=昨收,...
-                parts = raw.split('~')
-                if len(parts) > 4:
-                    price = float(parts[3])
-                    prev_close = float(parts[4])
-                    change_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else 0
-                    result.append({
-                        'code': stock['code'],
-                        'name': stock['name'],
-                        'price': round(price, 3),
-                        'change_pct': change_pct,
-                        'source': 'realtime',
-                    })
-                else:
-                    raise ValueError('数据格式异常')
-            except Exception as e2:
-                app.logger.warning(f"腾讯接口 {stock['code']} 失败: {e2}")
-                result.append({
-                    'code': stock['code'],
-                    'name': stock['name'],
-                    'price': None,
-                    'change_pct': 0,
-                    'source': 'error',
-                })
-        if any(s['price'] is not None for s in result):
-            return result
-    except Exception as e:
-        app.logger.warning(f'腾讯实时接口失败: {e}')
 
     return None
 
