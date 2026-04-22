@@ -315,54 +315,120 @@ HK_WATCH_LIST = [
     {'code': '02589', 'name': '沪上阿姨'},
 ]
 
-@app.route('/api/hk-stocks')
-def get_hk_stocks():
-    """获取港股实时行情（监控列表）"""
-    import akshare as ak
-    result = []
+# 港股行情缓存（避免每秒都调外部接口）
+_hk_cache = {'data': None, 'ts': 0}
+_HK_CACHE_TTL = 3  # 秒
 
-    # 方案1：用 stock_hk_spot_em 批量获取实时行情（Railway环境可用）
+def _fetch_hk_realtime():
+    """
+    尝试获取港股实时行情，依次：
+      1. akshare stock_hk_spot_em（东方财富，最新价 iloc[3]）
+      2. 腾讯实时接口 https://qt.gtimg.cn/q=r_hk{code}
+    返回 list[dict] 或 None（全部失败）
+    """
+    import akshare as ak
+
+    codes = [s['code'] for s in HK_WATCH_LIST]
+    code_name_map = {s['code']: s['name'] for s in HK_WATCH_LIST}
+
+    # ---- 方案1：东方财富批量实时 ----
     try:
         df = ak.stock_hk_spot_em()
         col_code = df.columns[1]
         col_name = df.columns[2]
-        # 列名映射（东方财富港股字段）
-        col_map = {c: i for i, c in enumerate(df.columns)}
-
-        codes = [s['code'] for s in HK_WATCH_LIST]
-        code_name_map = {s['code']: s['name'] for s in HK_WATCH_LIST}
 
         df['_code5'] = df[col_code].astype(str).str.zfill(5)
         matched = df[df['_code5'].isin(codes)].copy()
 
+        result = []
         for _, row in matched.iterrows():
             code5 = str(row[col_code]).zfill(5)
-            # 东方财富港股实时列：序号/代码/名称/最新价/涨跌额/涨跌幅/今开/最高/最低/昨收/成交量/成交额
             try:
-                price = float(row.iloc[3])   # 最新价
-                prev_close = float(row.iloc[9])   # 昨收
+                price = float(row.iloc[3])      # 最新价
+                prev_close = float(row.iloc[9]) # 昨收
                 change_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else 0
             except Exception:
                 price = None
                 change_pct = 0
             result.append({
                 'code': code5,
-                'name': code_name_map.get(code5, row[col_name]),
+                'name': code_name_map.get(code5, str(row[col_name])),
                 'price': round(price, 3) if price else None,
                 'change_pct': change_pct,
                 'source': 'realtime',
             })
 
-        # 按监控列表顺序排序
-        order = {s['code']: i for i, s in enumerate(HK_WATCH_LIST)}
-        result.sort(key=lambda x: order.get(x['code'], 99))
+        if len(result) == len(codes):
+            # 全部匹配到，按监控列表排序
+            order = {s['code']: i for i, s in enumerate(HK_WATCH_LIST)}
+            result.sort(key=lambda x: order.get(x['code'], 99))
+            return result
+    except Exception as e:
+        app.logger.warning(f'stock_hk_spot_em failed: {e}')
 
-        if result:
-            return jsonify({'stocks': result})
-    except Exception:
-        pass
+    # ---- 方案2：腾讯实时接口（逐只查询） ----
+    try:
+        import urllib.request
+        result = []
+        for stock in HK_WATCH_LIST:
+            url = f"https://qt.gtimg.cn/q=r_hk{stock['code']}"
+            try:
+                with urllib.request.urlopen(url, timeout=3) as resp:
+                    raw = resp.read().decode('gbk', errors='replace')
+                # 格式：v_r_hk03690="1~美团~03690~140.20~140.60~..."
+                # 字段索引（~分割）：0=type,1=名称,2=代码,3=当前价,4=昨收,...
+                parts = raw.split('~')
+                if len(parts) > 4:
+                    price = float(parts[3])
+                    prev_close = float(parts[4])
+                    change_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else 0
+                    result.append({
+                        'code': stock['code'],
+                        'name': stock['name'],
+                        'price': round(price, 3),
+                        'change_pct': change_pct,
+                        'source': 'realtime',
+                    })
+                else:
+                    raise ValueError('数据格式异常')
+            except Exception as e2:
+                app.logger.warning(f"腾讯接口 {stock['code']} 失败: {e2}")
+                result.append({
+                    'code': stock['code'],
+                    'name': stock['name'],
+                    'price': None,
+                    'change_pct': 0,
+                    'source': 'error',
+                })
+        if any(s['price'] is not None for s in result):
+            return result
+    except Exception as e:
+        app.logger.warning(f'腾讯实时接口失败: {e}')
 
-    # 方案2：逐只用 stock_hk_daily 取最新收盘（兜底）
+    return None
+
+
+@app.route('/api/hk-stocks')
+def get_hk_stocks():
+    """获取港股实时行情（带3秒内存缓存，避免高频外部调用）"""
+    import time as _time
+    import akshare as ak
+
+    now = _time.time()
+    # 缓存未过期直接返回
+    if _hk_cache['data'] and (now - _hk_cache['ts']) < _HK_CACHE_TTL:
+        return jsonify({'stocks': _hk_cache['data'], 'cached': True})
+
+    # 尝试实时获取
+    result = _fetch_hk_realtime()
+
+    if result:
+        _hk_cache['data'] = result
+        _hk_cache['ts'] = now
+        return jsonify({'stocks': result})
+
+    # 终极兜底：akshare 历史日线最新收盘（非实时）
+    result = []
     for stock in HK_WATCH_LIST:
         try:
             df = ak.stock_hk_daily(symbol=stock['code'], adjust="")
