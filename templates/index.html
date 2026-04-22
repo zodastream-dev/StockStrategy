@@ -201,6 +201,16 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.3; }
         }
+
+        @keyframes price-flash {
+            0% { opacity: 1; }
+            30% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
+
+        .hk-stock-price.flash {
+            animation: price-flash 0.4s ease;
+        }
         .market-up { color: var(--danger); }
         .market-down { color: var(--success); }
 
@@ -2112,6 +2122,8 @@
     }
 
     // ===================== 港股实时行情 =====================
+    let _hkPriceCache = {};  // 记录上次价格，用于判断是否变动
+
     async function loadHKStocks() {
         try {
             const resp = await fetch('/api/hk-stocks');
@@ -2119,7 +2131,7 @@
             if (!data.stocks || !data.stocks.length) return;
 
             const bar = document.getElementById('hk-bar');
-            const timeEl = document.getElementById('hk-update-time');
+            const isRealtime = data.stocks[0]?.source === 'realtime';
 
             const cards = data.stocks.map(s => {
                 const isUp = s.change_pct > 0;
@@ -2128,28 +2140,40 @@
                 const arrow = isUp ? '▲' : isDown ? '▼' : '—';
                 const priceStr = s.price != null ? s.price.toFixed(2) : '--';
                 const changeStr = s.change_pct != null ? Math.abs(s.change_pct).toFixed(2) + '%' : '--';
-                return `<div class="hk-stock-card">
+                return `<div class="hk-stock-card" id="hk-card-${s.code}">
                     <span class="hk-stock-name">${s.name}</span>
-                    <span class="hk-stock-price">${priceStr}</span>
-                    <span class="hk-stock-change ${cls}">${arrow} ${changeStr}</span>
+                    <span class="hk-stock-price" id="hk-price-${s.code}">${priceStr}</span>
+                    <span class="hk-stock-change ${cls}" id="hk-change-${s.code}">${arrow} ${changeStr}</span>
                 </div>`;
             }).join('');
 
-            const sourceTag = data.stocks[0]?.source === 'realtime'
-                ? '' : '<span style="font-size:10px;color:var(--text-muted);margin-left:4px;">(收盘价)</span>';
+            const sourceTag = isRealtime ? '' : '<span style="font-size:10px;color:var(--text-muted);margin-left:2px;">(收盘)</span>';
+            const timeStr = new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
 
             bar.innerHTML = `<span class="hk-bar-label">🇭🇰 港股</span>` + cards +
                 `<span id="hk-update-time" style="font-size:11px;color:var(--text-muted);margin-left:auto;">` +
-                `更新 ${new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}${sourceTag}</span>` +
-                `<div class="hk-refresh-dot" title="30秒自动刷新"></div>`;
+                `${timeStr}${sourceTag}</span>` +
+                `<div class="hk-refresh-dot" title="10秒实时刷新"></div>`;
+
+            // 价格变动时闪烁
+            data.stocks.forEach(s => {
+                const priceEl = document.getElementById(`hk-price-${s.code}`);
+                if (priceEl && _hkPriceCache[s.code] !== undefined && _hkPriceCache[s.code] !== s.price) {
+                    priceEl.classList.remove('flash');
+                    void priceEl.offsetWidth; // 触发reflow
+                    priceEl.classList.add('flash');
+                }
+                _hkPriceCache[s.code] = s.price;
+            });
+
         } catch (e) {
             console.warn('港股行情加载失败:', e);
         }
     }
 
-    // 港股30秒自动刷新
+    // 港股10秒实时刷新
     loadHKStocks();
-    setInterval(loadHKStocks, 30000);
+    setInterval(loadHKStocks, 10000);
 
     // ===================== 市场概览 =====================
     async function loadMarketOverview() {

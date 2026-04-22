@@ -310,7 +310,7 @@ def market_overview():
 HK_WATCH_LIST = [
     {'code': '03690', 'name': '美团'},
     {'code': '09988', 'name': '阿里巴巴'},
-    {'code': '06669', 'name': '胜宏科技'},
+    {'code': '02476', 'name': '胜宏科技'},
     {'code': '09992', 'name': '泡泡玛特'},
     {'code': '02589', 'name': '沪上阿姨'},
 ]
