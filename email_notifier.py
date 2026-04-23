@@ -1,6 +1,6 @@
 """
 邮件通知模块
-支持 SMTP（本地）和 SendGrid HTTP API（Railway等云环境）
+支持 Resend HTTP API（推荐）、SendGrid HTTP API、SMTP（本地）
 """
 import smtplib
 import os
@@ -18,41 +18,71 @@ class EmailNotifier:
 
     def __init__(self, smtp_host: str = None, smtp_port: int = 465,
                  sender_email: str = None, sender_password: str = None,
-                 sendgrid_api_key: str = None):
+                 sendgrid_api_key: str = None,
+                 resend_api_key: str = None,
+                 resend_from: str = None):
         self.smtp_host = smtp_host or os.environ.get('SMTP_HOST', 'smtp.qq.com')
         self.smtp_port = smtp_port
         self.sender_email = sender_email or os.environ.get('SMTP_EMAIL')
         self.sender_password = sender_password or os.environ.get('SMTP_PASSWORD')
-        # SendGrid 优先（SMTP在云环境不通）
         self.sendgrid_api_key = sendgrid_api_key or os.environ.get('SENDGRID_API_KEY')
+        # Resend（优先级最高）
+        self.resend_api_key = resend_api_key or os.environ.get('RESEND_API_KEY')
+        # Resend 发件地址，如 "A+H策略平台 <noreply@yourdomain.com>"
+        self.resend_from = resend_from or os.environ.get('RESEND_FROM')
 
     def is_configured(self) -> bool:
-        """检查是否已配置（SendGrid优先，否则SMTP）"""
-        return bool(self.sendgrid_api_key) or bool(self.sender_email and self.sender_password)
+        """检查是否已配置"""
+        return (bool(self.resend_api_key and self.resend_from) or
+                bool(self.sendgrid_api_key) or
+                bool(self.sender_email and self.sender_password))
 
     def send_email(self, to_email: str, subject: str, html_content: str,
                    sender_name: str = "A+H策略平台") -> dict:
         """
-        发送邮件（SendGrid优先，云环境走HTTP API；SMTP兜底用于本地）
-
-        Args:
-            to_email: 收件人邮箱
-            subject: 邮件主题
-            html_content: HTML格式的邮件内容
-            sender_name: 发件人昵称
-
-        Returns:
-            dict: {'success': True/False, 'message': str}
+        发送邮件（Resend 优先，SendGrid 次之，SMTP 兜底）
         """
         if not self.is_configured():
-            return {'success': False, 'message': '邮件服务未配置，请先设置SMTP信息或SendGrid API Key'}
+            return {'success': False, 'message': '邮件服务未配置，请设置 RESEND_API_KEY 等环境变量'}
 
-        # 优先使用 SendGrid HTTP API（云环境推荐）
+        if self.resend_api_key and self.resend_from:
+            return self._send_via_resend(to_email, subject, html_content, sender_name)
+
         if self.sendgrid_api_key:
             return self._send_via_sendgrid(to_email, subject, html_content, sender_name)
 
-        # SMTP 兜底（本地开发用）
         return self._send_via_smtp(to_email, subject, html_content, sender_name)
+
+    def _send_via_resend(self, to_email: str, subject: str, html_content: str,
+                         sender_name: str = "A+H策略平台") -> dict:
+        """通过 Resend API 发送邮件"""
+        url = 'https://api.resend.com/emails'
+        # from 格式：直接用 RESEND_FROM 环境变量（如 "A+H策略平台 <noreply@example.com>"）
+        payload = {
+            'from': self.resend_from,
+            'to': [to_email],
+            'subject': subject,
+            'html': html_content,
+        }
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(
+            url, data=data,
+            headers={
+                'Authorization': f'Bearer {self.resend_api_key}',
+                'Content-Type': 'application/json',
+            },
+            method='POST'
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                body = resp.read().decode('utf-8', errors='replace')
+                result = json.loads(body)
+                return {'success': True, 'message': f'邮件已发送至 {to_email}（Resend，id={result.get("id", "-")}）'}
+        except urllib.error.HTTPError as e:
+            body = e.read().decode('utf-8', errors='replace')
+            return {'success': False, 'message': f'Resend 错误 {e.code}: {body[:300]}'}
+        except Exception as e:
+            return {'success': False, 'message': f'Resend 发送失败: {str(e)}'}
 
     def _send_via_sendgrid(self, to_email: str, subject: str, html_content: str,
                            sender_name: str = "A+H策略平台") -> dict:

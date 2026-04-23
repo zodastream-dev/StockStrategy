@@ -528,29 +528,36 @@ _email_config = _config['email']
 alert_config = _config['alert']
 
 
-# 启动时初始化邮件通知器（SendGrid优先，SMTP兜底）
-if _email_config.get('sender_email'):
-    try:
-        from email_notifier import init_email_notifier
-    except (ImportError, ModuleNotFoundError):
-        from strategy_platform.email_notifier import init_email_notifier
-    init_email_notifier(
-        smtp_host=_email_config.get('smtp_host'),
-        smtp_port=_email_config.get('smtp_port', 465),
-        sender_email=_email_config.get('sender_email'),
-        sender_password=_email_config.get('sender_password'),
-        sendgrid_api_key=os.environ.get('SENDGRID_API_KEY')
-    )
+# 启动时初始化邮件通知器（Resend优先，SendGrid次之，SMTP兜底）
+try:
+    from email_notifier import init_email_notifier
+except (ImportError, ModuleNotFoundError):
+    from strategy_platform.email_notifier import init_email_notifier
+
+init_email_notifier(
+    smtp_host=_email_config.get('smtp_host'),
+    smtp_port=_email_config.get('smtp_port', 465),
+    sender_email=_email_config.get('sender_email'),
+    sender_password=_email_config.get('sender_password'),
+    sendgrid_api_key=os.environ.get('SENDGRID_API_KEY'),
+    resend_api_key=os.environ.get('RESEND_API_KEY'),
+    resend_from=os.environ.get('RESEND_FROM'),
+)
 
 
 @app.route('/api/email/config', methods=['GET'])
 def get_email_config():
     """获取邮件配置状态"""
+    has_resend = bool(os.environ.get('RESEND_API_KEY') and os.environ.get('RESEND_FROM'))
+    has_sendgrid = bool(os.environ.get('SENDGRID_API_KEY'))
+    has_smtp = bool(_email_config.get('sender_email') and _email_config.get('sender_password'))
     return jsonify({
-        'configured': bool(_email_config.get('sender_email') and _email_config.get('sender_password')),
+        'configured': has_resend or has_sendgrid or has_smtp,
+        'provider': 'resend' if has_resend else ('sendgrid' if has_sendgrid else ('smtp' if has_smtp else 'none')),
         'has_sender': bool(_email_config.get('sender_email')),
         'smtp_host': _email_config.get('smtp_host'),
         'smtp_port': _email_config.get('smtp_port'),
+        'resend_from': os.environ.get('RESEND_FROM', ''),
     })
 
 
@@ -575,7 +582,9 @@ def set_email_config():
             smtp_port=_email_config.get('smtp_port', 465),
             sender_email=_email_config.get('sender_email'),
             sender_password=_email_config.get('sender_password'),
-            sendgrid_api_key=os.environ.get('SENDGRID_API_KEY')
+            sendgrid_api_key=os.environ.get('SENDGRID_API_KEY'),
+            resend_api_key=os.environ.get('RESEND_API_KEY'),
+            resend_from=os.environ.get('RESEND_FROM'),
         )
         _email_config['configured'] = True
     else:
@@ -583,7 +592,7 @@ def set_email_config():
 
     # 持久化（不保存密码到文件，仅环境变量方式）
     _save_config({'email': _email_config, 'alert': alert_config})
-    return jsonify({'success': True, 'message': '邮件配置已保存（SendGrid优先，SMTP兜底）'})
+    return jsonify({'success': True, 'message': '邮件配置已保存（Resend优先，SMTP兜底）'})
 
 
 @app.route('/api/email/test', methods=['POST'])
