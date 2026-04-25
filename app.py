@@ -1,7 +1,7 @@
 """
 策略回测平台 - Flask后端
 """
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 
 import sys
 import io
@@ -528,7 +528,7 @@ _email_config = _config['email']
 alert_config = _config['alert']
 
 
-# 启动时初始化邮件通知器（Resend优先，SendGrid次之，SMTP兜底）
+# 启动时初始化邮件通知器（阿里云DirectMail 优先，SMTP 兜底）
 try:
     from email_notifier import init_email_notifier
 except (ImportError, ModuleNotFoundError):
@@ -539,25 +539,28 @@ init_email_notifier(
     smtp_port=_email_config.get('smtp_port', 465),
     sender_email=_email_config.get('sender_email'),
     sender_password=_email_config.get('sender_password'),
-    sendgrid_api_key=os.environ.get('SENDGRID_API_KEY'),
-    resend_api_key=os.environ.get('RESEND_API_KEY'),
-    resend_from=os.environ.get('RESEND_FROM'),
+    aliyun_access_key=os.environ.get('ALIYUN_ACCESS_KEY'),
+    aliyun_access_secret=os.environ.get('ALIYUN_ACCESS_SECRET'),
+    aliyun_account_name=os.environ.get('ALIYUN_ACCOUNT_NAME'),
+    aliyun_region=os.environ.get('ALIYUN_REGION'),
 )
 
 
 @app.route('/api/email/config', methods=['GET'])
 def get_email_config():
     """获取邮件配置状态"""
-    has_resend = bool(os.environ.get('RESEND_API_KEY') and os.environ.get('RESEND_FROM'))
-    has_sendgrid = bool(os.environ.get('SENDGRID_API_KEY'))
+    has_aliyun = bool(os.environ.get('ALIYUN_ACCESS_KEY') and
+                      os.environ.get('ALIYUN_ACCESS_SECRET') and
+                      os.environ.get('ALIYUN_ACCOUNT_NAME'))
     has_smtp = bool(_email_config.get('sender_email') and _email_config.get('sender_password'))
     return jsonify({
-        'configured': has_resend or has_sendgrid or has_smtp,
-        'provider': 'resend' if has_resend else ('sendgrid' if has_sendgrid else ('smtp' if has_smtp else 'none')),
+        'configured': has_aliyun or has_smtp,
+        'provider': 'aliyun' if has_aliyun else ('smtp' if has_smtp else 'none'),
         'has_sender': bool(_email_config.get('sender_email')),
         'smtp_host': _email_config.get('smtp_host'),
         'smtp_port': _email_config.get('smtp_port'),
-        'resend_from': os.environ.get('RESEND_FROM', ''),
+        'aliyun_account_name': os.environ.get('ALIYUN_ACCOUNT_NAME', ''),
+        'aliyun_region': os.environ.get('ALIYUN_REGION', 'cn-hangzhou'),
     })
 
 
@@ -582,9 +585,10 @@ def set_email_config():
             smtp_port=_email_config.get('smtp_port', 465),
             sender_email=_email_config.get('sender_email'),
             sender_password=_email_config.get('sender_password'),
-            sendgrid_api_key=os.environ.get('SENDGRID_API_KEY'),
-            resend_api_key=os.environ.get('RESEND_API_KEY'),
-            resend_from=os.environ.get('RESEND_FROM'),
+            aliyun_access_key=os.environ.get('ALIYUN_ACCESS_KEY'),
+            aliyun_access_secret=os.environ.get('ALIYUN_ACCESS_SECRET'),
+            aliyun_account_name=os.environ.get('ALIYUN_ACCOUNT_NAME'),
+            aliyun_region=os.environ.get('ALIYUN_REGION'),
         )
         _email_config['configured'] = True
     else:
@@ -592,7 +596,7 @@ def set_email_config():
 
     # 持久化（不保存密码到文件，仅环境变量方式）
     _save_config({'email': _email_config, 'alert': alert_config})
-    return jsonify({'success': True, 'message': '邮件配置已保存（Resend优先，SMTP兜底）'})
+    return jsonify({'success': True, 'message': '邮件配置已保存（阿里云DirectMail 优先，SMTP 兜底）'})
 
 
 @app.route('/api/email/test', methods=['POST'])
@@ -752,6 +756,336 @@ def check_and_alert():
         'message': f'上证指数 {sh_price} 点，未超过阈值 {alert_config["threshold"]}',
         'triggered': False,
         'sh_price': sh_price,
+    })
+
+
+# ============================================================
+# 自定义监控策略（邮件提醒）
+# ============================================================
+import re as _re
+
+# 内存存储监控策略列表（持久化到 config.json）
+_monitor_strategies = []  # [{id, name, condition, notify_email, enabled, last_triggered}]
+
+def _load_monitor_strategies():
+    """从 config.json 加载监控策略"""
+    global _monitor_strategies
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                data = _json.load(f)
+            _monitor_strategies = data.get('monitor_strategies', [])
+    except Exception:
+        _monitor_strategies = []
+
+def _save_monitor_strategies():
+    """保存监控策略到 config.json"""
+    try:
+        data = {}
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                data = _json.load(f)
+        data['monitor_strategies'] = _monitor_strategies
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            _json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"保存监控策略失败: {e}")
+
+# 启动时加载
+_load_monitor_strategies()
+
+
+@app.route('/api/monitor/strategies', methods=['GET'])
+def list_monitor_strategies():
+    """获取所有监控策略"""
+    return jsonify({'strategies': _monitor_strategies})
+
+
+@app.route('/api/monitor/strategies', methods=['POST'])
+def create_monitor_strategy():
+    """创建监控策略"""
+    data = request.get_json()
+    name = data.get('name', '').strip()
+    condition = data.get('condition', '').strip()
+    notify_email = data.get('notify_email', '').strip()
+
+    if not name:
+        return jsonify({'success': False, 'message': '策略名称不能为空'})
+    if not condition:
+        return jsonify({'success': False, 'message': '满足条件不能为空'})
+    if not notify_email:
+        return jsonify({'success': False, 'message': '通知邮箱不能为空'})
+
+    strategy = {
+        'id': uuid.uuid4().hex[:12],
+        'name': name,
+        'condition': condition,
+        'notify_email': notify_email,
+        'enabled': True,
+        'last_triggered': None,
+        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+    }
+    _monitor_strategies.append(strategy)
+    _save_monitor_strategies()
+    return jsonify({'success': True, 'strategy': strategy})
+
+
+@app.route('/api/monitor/strategies/<strategy_id>', methods=['PUT'])
+def update_monitor_strategy(strategy_id):
+    """更新监控策略"""
+    data = request.get_json()
+    for s in _monitor_strategies:
+        if s['id'] == strategy_id:
+            if 'name' in data: s['name'] = data['name'].strip()
+            if 'condition' in data: s['condition'] = data['condition'].strip()
+            if 'notify_email' in data: s['notify_email'] = data['notify_email'].strip()
+            if 'enabled' in data: s['enabled'] = bool(data['enabled'])
+            _save_monitor_strategies()
+            return jsonify({'success': True, 'strategy': s})
+    return jsonify({'success': False, 'message': '策略不存在'}), 404
+
+
+@app.route('/api/monitor/strategies/<strategy_id>', methods=['DELETE'])
+def delete_monitor_strategy(strategy_id):
+    """删除监控策略"""
+    global _monitor_strategies
+    _monitor_strategies = [s for s in _monitor_strategies if s['id'] != strategy_id]
+    _save_monitor_strategies()
+    return jsonify({'success': True})
+
+
+# ---- 监控任务管理 ----
+_monitor_tasks = {}  # {strategy_id: {status, log, stop_flag}}
+_monitor_lock = threading.Lock()
+
+
+def _evaluate_condition(condition: str) -> tuple:
+    """
+    解析并评估监控条件。
+    支持格式（大小写不敏感）：
+      - 上证指数 > 3500
+      - 上证指数 >= 3500
+      - 上证指数 < 3200
+      - 上证指数 <= 3200
+      - 港股 02476 > 300
+      - 港股 02476 >= 300
+      - A股 000001 > 20
+    返回: (triggered: bool, current_value: float, description: str)
+    """
+    import akshare as ak
+
+    cond = condition.strip()
+
+    # --- 上证指数 ---
+    m = _re.match(r'上证指数\s*([><=!]+)\s*([\d.]+)', cond)
+    if not m:
+        m = _re.match(r'Shanghai\s*([><=!]+)\s*([\d.]+)', cond, _re.I)
+    if m:
+        op, threshold = m.group(1), float(m.group(2))
+        try:
+            df = ak.stock_zh_index_daily(symbol='sh000001')
+            if df is not None and not df.empty:
+                price = round(float(df.iloc[-1]['close']), 2)
+                triggered = _compare(price, op, threshold)
+                return triggered, price, f'上证指数 {price} {op} {threshold}'
+        except Exception as e:
+            return False, 0, f'获取上证指数失败: {e}'
+
+    # --- 深证成指 ---
+    m = _re.match(r'深证成指\s*([><=!]+)\s*([\d.]+)', cond)
+    if m:
+        op, threshold = m.group(1), float(m.group(2))
+        try:
+            df = ak.stock_zh_index_daily(symbol='sz399001')
+            if df is not None and not df.empty:
+                price = round(float(df.iloc[-1]['close']), 2)
+                triggered = _compare(price, op, threshold)
+                return triggered, price, f'深证成指 {price} {op} {threshold}'
+        except Exception as e:
+            return False, 0, f'获取深证成指失败: {e}'
+
+    # --- 港股 代码 ---
+    m = _re.match(r'(?:港股|HK)\s*(\d{4,5})\s*([><=!]+)\s*([\d.]+)', cond)
+    if m:
+        code, op, threshold = m.group(1).zfill(5), m.group(2), float(m.group(3))
+        try:
+            import urllib.request, ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            url = f'https://qt.gtimg.cn/q=r_hk{code}'
+            with urllib.request.urlopen(url, timeout=5, context=ctx) as resp:
+                raw = resp.read().decode('gbk', errors='replace')
+            parts = raw.split('~')
+            if len(parts) > 4:
+                price = round(float(parts[3]), 3)
+                name = parts[1]
+                triggered = _compare(price, op, threshold)
+                return triggered, price, f'港股{code}({name}) {price} {op} {threshold}'
+        except Exception as e:
+            return False, 0, f'获取港股{code}失败: {e}'
+
+    # --- A股 代码 ---
+    m = _re.match(r'(?:A股|A)\s*(\d{6})\s*([><=!]+)\s*([\d.]+)', cond)
+    if m:
+        code, op, threshold = m.group(1), m.group(2), float(m.group(3))
+        try:
+            df = ak.stock_zh_a_hist(symbol=code, period='daily', adjust='')
+            if df is not None and not df.empty:
+                price = round(float(df.iloc[-1].iloc[2]), 3)
+                triggered = _compare(price, op, threshold)
+                return triggered, price, f'A股{code} {price} {op} {threshold}'
+        except Exception as e:
+            return False, 0, f'获取A股{code}失败: {e}'
+
+    return False, 0, f'无法解析条件: {cond}'
+
+
+def _compare(value: float, op: str, threshold: float) -> bool:
+    if op == '>': return value > threshold
+    if op == '>=': return value >= threshold
+    if op == '<': return value < threshold
+    if op == '<=': return value <= threshold
+    if op in ('=', '=='): return abs(value - threshold) < 0.001
+    if op in ('!=', '<>'): return abs(value - threshold) >= 0.001
+    return False
+
+
+def _run_monitor_task(strategy_id: str):
+    """后台监控线程：每30秒检查一次条件"""
+    with _monitor_lock:
+        _monitor_tasks[strategy_id] = {
+            'status': 'running',
+            'log': [],
+            'stop': False,
+        }
+
+    def log(msg):
+        ts = datetime.now().strftime('%H:%M:%S')
+        entry = f'[{ts}] {msg}'
+        with _monitor_lock:
+            _monitor_tasks[strategy_id]['log'].append(entry)
+            # 只保留最近100条日志
+            if len(_monitor_tasks[strategy_id]['log']) > 100:
+                _monitor_tasks[strategy_id]['log'] = _monitor_tasks[strategy_id]['log'][-100:]
+        print(f'[Monitor:{strategy_id}] {msg}')
+
+    # 找到策略
+    strategy = next((s for s in _monitor_strategies if s['id'] == strategy_id), None)
+    if not strategy:
+        with _monitor_lock:
+            _monitor_tasks[strategy_id]['status'] = 'error'
+        return
+
+    log(f'开始监控：{strategy["name"]} | 条件：{strategy["condition"]}')
+
+    today_sent = {}  # date -> bool (防止当天重复发送)
+
+    while True:
+        with _monitor_lock:
+            should_stop = _monitor_tasks.get(strategy_id, {}).get('stop', True)
+        if should_stop:
+            log('监控已停止')
+            with _monitor_lock:
+                _monitor_tasks[strategy_id]['status'] = 'stopped'
+            break
+
+        # 重新读取策略（可能已更新）
+        strategy = next((s for s in _monitor_strategies if s['id'] == strategy_id), None)
+        if not strategy or not strategy.get('enabled'):
+            log('策略已禁用或删除，停止监控')
+            with _monitor_lock:
+                _monitor_tasks[strategy_id]['status'] = 'stopped'
+            break
+
+        try:
+            triggered, value, desc = _evaluate_condition(strategy['condition'])
+            log(f'检查条件: {desc} → {"✅ 触发" if triggered else "❌ 未触发"}')
+
+            if triggered:
+                today = datetime.now().strftime('%Y-%m-%d')
+                if today_sent.get(strategy_id) != today:
+                    # 发送邮件
+                    try:
+                        from email_notifier import get_email_notifier
+                    except ImportError:
+                        from strategy_platform.email_notifier import get_email_notifier
+                    notifier = get_email_notifier()
+                    if notifier.is_configured():
+                        html = f"""
+                        <h2>📊 策略监控预警</h2>
+                        <p><strong>策略名称：</strong>{strategy['name']}</p>
+                        <p><strong>触发条件：</strong>{strategy['condition']}</p>
+                        <p><strong>当前数值：</strong><span style="font-size:20px;color:#c33;font-weight:bold">{value}</span></p>
+                        <p><strong>检查详情：</strong>{desc}</p>
+                        <p><strong>触发时间：</strong>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                        <hr>
+                        <p style="color:#888;font-size:12px">此邮件由 A+H策略回测平台 自动发送，请勿回复。</p>
+                        """
+                        result = notifier.send_email(
+                            to_email=strategy['notify_email'],
+                            subject=f'📊 策略预警：{strategy["name"]} 条件已满足',
+                            html_content=html
+                        )
+                        if result['success']:
+                            today_sent[strategy_id] = today
+                            log(f'✅ 邮件已发送至 {strategy["notify_email"]}')
+                            # 更新最后触发时间
+                            for s in _monitor_strategies:
+                                if s['id'] == strategy_id:
+                                    s['last_triggered'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            _save_monitor_strategies()
+                        else:
+                            log(f'❌ 邮件发送失败: {result["message"]}')
+                    else:
+                        log('❌ 邮件服务未配置，无法发送')
+                else:
+                    log(f'今日已发送过通知，跳过')
+
+        except Exception as e:
+            log(f'检查出错: {e}')
+
+        # 每30秒检查一次
+        for _ in range(30):
+            with _monitor_lock:
+                if _monitor_tasks.get(strategy_id, {}).get('stop'):
+                    break
+            time.sleep(1)
+
+
+@app.route('/api/monitor/start/<strategy_id>', methods=['POST'])
+def start_monitor(strategy_id):
+    """启动监控任务"""
+    strategy = next((s for s in _monitor_strategies if s['id'] == strategy_id), None)
+    if not strategy:
+        return jsonify({'success': False, 'message': '策略不存在'})
+
+    with _monitor_lock:
+        task = _monitor_tasks.get(strategy_id, {})
+        if task.get('status') == 'running':
+            return jsonify({'success': False, 'message': '监控已在运行中'})
+
+    _executor.submit(_run_monitor_task, strategy_id)
+    return jsonify({'success': True, 'message': f'监控已启动：{strategy["name"]}'})
+
+
+@app.route('/api/monitor/stop/<strategy_id>', methods=['POST'])
+def stop_monitor(strategy_id):
+    """停止监控任务"""
+    with _monitor_lock:
+        if strategy_id in _monitor_tasks:
+            _monitor_tasks[strategy_id]['stop'] = True
+    return jsonify({'success': True, 'message': '正在停止监控...'})
+
+
+@app.route('/api/monitor/status/<strategy_id>', methods=['GET'])
+def monitor_status(strategy_id):
+    """获取监控任务状态和日志"""
+    with _monitor_lock:
+        task = _monitor_tasks.get(strategy_id, {})
+    return jsonify({
+        'status': task.get('status', 'stopped'),
+        'log': task.get('log', []),
     })
 
 

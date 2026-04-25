@@ -1,12 +1,17 @@
 """
 邮件通知模块
-支持 Resend HTTP API（推荐）、SendGrid HTTP API、SMTP（本地）
+支持 阿里云 DirectMail API、SMTP（本地兜底）
 """
 import smtplib
 import os
 import urllib.request
 import urllib.parse
+import urllib.error
 import json
+import base64
+import hmac
+import hashlib
+import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
@@ -16,107 +21,131 @@ from typing import Optional
 class EmailNotifier:
     """邮件通知器"""
 
-    def __init__(self, smtp_host: str = None, smtp_port: int = 465,
+    def __init__(self,
+                 smtp_host: str = None, smtp_port: int = 465,
                  sender_email: str = None, sender_password: str = None,
-                 sendgrid_api_key: str = None,
-                 resend_api_key: str = None,
-                 resend_from: str = None):
+                 # 阿里云 DirectMail
+                 aliyun_access_key: str = None,
+                 aliyun_access_secret: str = None,
+                 aliyun_account_name: str = None,
+                 aliyun_region: str = None):
         self.smtp_host = smtp_host or os.environ.get('SMTP_HOST', 'smtp.qq.com')
         self.smtp_port = smtp_port
         self.sender_email = sender_email or os.environ.get('SMTP_EMAIL')
         self.sender_password = sender_password or os.environ.get('SMTP_PASSWORD')
-        self.sendgrid_api_key = sendgrid_api_key or os.environ.get('SENDGRID_API_KEY')
-        # Resend（优先级最高）
-        self.resend_api_key = resend_api_key or os.environ.get('RESEND_API_KEY')
-        # Resend 发件地址，如 "A+H策略平台 <noreply@yourdomain.com>"
-        self.resend_from = resend_from or os.environ.get('RESEND_FROM')
+        # 阿里云 DirectMail
+        self.aliyun_access_key = aliyun_access_key or os.environ.get('ALIYUN_ACCESS_KEY')
+        self.aliyun_access_secret = aliyun_access_secret or os.environ.get('ALIYUN_ACCESS_SECRET')
+        self.aliyun_account_name = aliyun_account_name or os.environ.get('ALIYUN_ACCOUNT_NAME')
+        self.aliyun_region = aliyun_region or os.environ.get('ALIYUN_REGION', 'cn-hangzhou')
 
     def is_configured(self) -> bool:
         """检查是否已配置"""
-        return (bool(self.resend_api_key and self.resend_from) or
-                bool(self.sendgrid_api_key) or
-                bool(self.sender_email and self.sender_password))
+        return bool(
+            (self.aliyun_access_key and self.aliyun_access_secret and self.aliyun_account_name)
+            or (self.sender_email and self.sender_password)
+        )
 
     def send_email(self, to_email: str, subject: str, html_content: str,
                    sender_name: str = "A+H策略平台") -> dict:
         """
-        发送邮件（Resend 优先，SendGrid 次之，SMTP 兜底）
+        发送邮件（阿里云 DirectMail 优先，SMTP 兜底）
         """
         if not self.is_configured():
-            return {'success': False, 'message': '邮件服务未配置，请设置 RESEND_API_KEY 等环境变量'}
+            return {'success': False, 'message': '邮件服务未配置，请设置 ALIYUN_ACCESS_KEY 等环境变量'}
 
-        if self.resend_api_key and self.resend_from:
-            return self._send_via_resend(to_email, subject, html_content, sender_name)
-
-        if self.sendgrid_api_key:
-            return self._send_via_sendgrid(to_email, subject, html_content, sender_name)
+        # 阿里云 DirectMail（最高优先）
+        if self.aliyun_access_key and self.aliyun_access_secret and self.aliyun_account_name:
+            return self._send_via_aliyun(to_email, subject, html_content, sender_name)
 
         return self._send_via_smtp(to_email, subject, html_content, sender_name)
 
-    def _send_via_resend(self, to_email: str, subject: str, html_content: str,
+    def _send_via_aliyun(self, to_email: str, subject: str, html_content: str,
                          sender_name: str = "A+H策略平台") -> dict:
-        """通过 Resend API 发送邮件"""
-        url = 'https://api.resend.com/emails'
-        # from 格式：直接用 RESEND_FROM 环境变量（如 "A+H策略平台 <noreply@example.com>"）
-        payload = {
-            'from': self.resend_from,
-            'to': [to_email],
-            'subject': subject,
-            'html': html_content,
-        }
-        data = json.dumps(payload).encode('utf-8')
-        req = urllib.request.Request(
-            url, data=data,
-            headers={
-                'Authorization': f'Bearer {self.resend_api_key}',
-                'Content-Type': 'application/json',
-            },
-            method='POST'
-        )
+        """
+        通过阿里云 DirectMail API 发送邮件（HMAC-SHA1 签名）
+        参考: https://help.aliyun.com/zh/directmail/developer-reference/api-single-send-mail
+        """
+        import ssl as ssl_module
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            ctx = ssl_module.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl_module.CERT_NONE
+        except Exception:
+            ctx = None
+
+        # API 端点（固定 dm.aliyuncs.com，由 RegionId 参数路由）
+        region = self.aliyun_region or 'cn-hangzhou'
+        endpoint = 'https://dm.aliyuncs.com/'
+
+        # 公共参数
+        timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        nonce = str(int(time.time() * 1000))
+
+        # 业务参数
+        params = {
+            'Action': 'SingleSendMail',
+            'Format': 'JSON',
+            'Version': '2015-11-23',
+            'SignatureMethod': 'HMAC-SHA1',
+            'SignatureNonce': nonce,
+            'SignatureVersion': '1.0',
+            'AccessKeyId': self.aliyun_access_key,
+            'Timestamp': timestamp,
+            'RegionId': region,
+            'AccountName': self.aliyun_account_name,
+            'AddressType': '1',          # 1=随机账号, 0=发信地址
+            'ToAddress': to_email,
+            'Subject': subject,
+            'HtmlBody': html_content,
+            'ReplyToAddress': 'true',
+        }
+
+        # 构造规范化的请求字符串（按字典序排列参数）
+        sorted_params = sorted(params.items(), key=lambda x: x[0])
+        canonical = '&'.join(
+            f'{urllib.parse.quote(k, safe="~")}={urllib.parse.quote(str(v), safe="~")}'
+            for k, v in sorted_params
+        )
+
+        # 计算签名
+        string_to_sign = (f'POST&{urllib.parse.quote("/", safe="~")}&'
+                          f'{urllib.parse.quote(canonical, safe="~")}')
+        sign_key = self.aliyun_access_secret + '&'
+        signature = base64.b64encode(
+            hmac.new(sign_key.encode('utf-8'),
+                     string_to_sign.encode('utf-8'),
+                     hashlib.sha1).digest()
+        ).decode('utf-8')
+
+        # 带上签名的完整参数
+        params['Signature'] = signature
+
+        # 构造请求
+        data = urllib.parse.urlencode(params).encode('utf-8')
+        req = urllib.request.Request(endpoint, data=data, method='POST')
+        req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+
+        try:
+            opener = urllib.request.build_opener(
+                urllib.request.HTTPSHandler(context=ctx) if ctx else None
+            )
+            with opener.open(req, timeout=20) as resp:
                 body = resp.read().decode('utf-8', errors='replace')
                 result = json.loads(body)
-                return {'success': True, 'message': f'邮件已发送至 {to_email}（Resend，id={result.get("id", "-")}）'}
+                if 'RequestId' in result:
+                    return {'success': True,
+                            'message': f'邮件已发送至 {to_email}（阿里云DirectMail，RequestId={result["RequestId"]}）'}
+                return {'success': True, 'message': f'邮件已发送至 {to_email}（阿里云DirectMail）'}
         except urllib.error.HTTPError as e:
             body = e.read().decode('utf-8', errors='replace')
-            return {'success': False, 'message': f'Resend 错误 {e.code}: {body[:300]}'}
+            return {'success': False, 'message': f'阿里云DirectMail错误 {e.code}: {body[:300]}'}
         except Exception as e:
-            return {'success': False, 'message': f'Resend 发送失败: {str(e)}'}
-
-    def _send_via_sendgrid(self, to_email: str, subject: str, html_content: str,
-                           sender_name: str = "A+H策略平台") -> dict:
-        """通过 SendGrid Web API 发送邮件"""
-        import ssl as ssl_module
-        url = 'https://api.sendgrid.com/v3/mail/send'
-        payload = {
-            'personalizations': [{'to': [{'email': to_email}]}],
-            'from': {'email': self.sender_email, 'name': sender_name},
-            'subject': subject,
-            'content': [{'type': 'text/html', 'value': html_content}]
-        }
-        data = json.dumps(payload).encode('utf-8')
-        req = urllib.request.Request(
-            url, data=data,
-            headers={
-                'Authorization': f'Bearer {self.sendgrid_api_key}',
-                'Content-Type': 'application/json'
-            },
-            method='POST'
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                # SendGrid 202 = 成功
-                return {'success': True, 'message': f'邮件已发送至 {to_email}（SendGrid）'}
-        except urllib.error.HTTPError as e:
-            body = e.read().decode('utf-8', errors='replace')
-            return {'success': False, 'message': f'SendGrid错误 {e.code}: {body[:200]}'}
-        except Exception as e:
-            return {'success': False, 'message': f'SendGrid发送失败: {str(e)}'}
+            return {'success': False, 'message': f'阿里云DirectMail发送失败: {str(e)}'}
 
     def _send_via_smtp(self, to_email: str, subject: str, html_content: str,
                        sender_name: str = "A+H策略平台") -> dict:
-        """通过 SMTP 发送邮件（本地用）"""
+        """通过 SMTP 发送邮件（本地兜底）"""
         import ssl as ssl_module
         try:
             msg = MIMEMultipart('alternative')
@@ -130,7 +159,7 @@ class EmailNotifier:
             if self.smtp_port == 465:
                 context = ssl_module.create_default_context()
                 with smtplib.SMTP_SSL(self.smtp_host, self.smtp_port,
-                                      context=context, timeout=timeout) as server:
+                                       context=context, timeout=timeout) as server:
                     server.login(self.sender_email, self.sender_password)
                     server.sendmail(self.sender_email, [to_email], msg.as_string())
             else:
@@ -161,15 +190,7 @@ class EmailNotifier:
 
     def send_strategy_alert(self, to_email: str, strategy_name: str,
                             stock_info: dict, alert_details: str) -> dict:
-        """
-        发送策略预警邮件
-
-        Args:
-            to_email: 收件人
-            strategy_name: 策略名称
-            stock_info: 股票信息 dict
-            alert_details: 预警详情
-        """
+        """发送策略预警邮件"""
         subject = f"【策略预警】{strategy_name} - {stock_info.get('name', '未知')}"
 
         html_content = f"""
@@ -199,7 +220,7 @@ class EmailNotifier:
         <body>
             <div class="container">
                 <div class="header">
-                    <h1>📈 A+H策略预警</h1>
+                    <h1>A+H策略预警</h1>
                     <p>{strategy_name}</p>
                 </div>
                 <div class="content">
@@ -213,7 +234,7 @@ class EmailNotifier:
                     </div>
 
                     <div class="alert-box">
-                        <div class="alert-title">⚠️ 策略触发条件</div>
+                        <div class="alert-title">策略触发条件</div>
                         <p>{alert_details}</p>
                     </div>
 
@@ -246,9 +267,13 @@ def get_email_notifier() -> EmailNotifier:
 
 def init_email_notifier(smtp_host: str = None, smtp_port: int = 465,
                        sender_email: str = None, sender_password: str = None,
-                       sendgrid_api_key: str = None) -> EmailNotifier:
+                       aliyun_access_key: str = None, aliyun_access_secret: str = None,
+                       aliyun_account_name: str = None, aliyun_region: str = None) -> EmailNotifier:
     """初始化邮件通知器"""
     global _email_notifier
-    _email_notifier = EmailNotifier(smtp_host, smtp_port, sender_email, sender_password,
-                                    sendgrid_api_key)
+    _email_notifier = EmailNotifier(
+        smtp_host, smtp_port, sender_email, sender_password,
+        aliyun_access_key, aliyun_access_secret,
+        aliyun_account_name, aliyun_region
+    )
     return _email_notifier

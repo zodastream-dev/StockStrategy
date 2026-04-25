@@ -11,5 +11,16 @@
     "receiver_email": "",
     "threshold": 4000.0,
     "last_sent_time": null
-  }
+  },
+  "monitor_strategies": [
+    {
+      "id": "bc26ec8d1b2d",
+      "name": "HK stock alert",
+      "condition": "HK 02476 > 200",
+      "notify_email": "junlu@yookeer.com",
+      "enabled": true,
+      "last_triggered": null,
+      "created_at": "2026-04-25 01:39:48"
+    }
+  ]
 }

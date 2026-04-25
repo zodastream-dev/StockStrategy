@@ -1125,11 +1125,16 @@
                 <div class="card animate-in" style="animation-delay:0.05s">
                     <div class="card-header">
                         <div class="card-title">🎯 选择策略</div>
+                        <button class="btn-small" onclick="openAddMonitorModal()" title="添加自定义邮件提醒策略" style="display:flex;align-items:center;gap:4px;padding:4px 10px;">
+                            ＋ 添加策略
+                        </button>
                     </div>
                     <div class="card-body" style="padding:12px;">
                         <div class="strategy-list" id="strategy-list">
                             <!-- JS动态填充 -->
                         </div>
+                        <!-- 自定义监控策略列表 -->
+                        <div id="monitor-strategy-list" style="margin-top:8px;"></div>
                     </div>
                 </div>
 
@@ -1363,6 +1368,81 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeConfigModal()" style="flex:1">取消</button>
                 <button class="btn btn-primary" onclick="applyConfig()" style="flex:1">应用配置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加/编辑监控策略弹窗 -->
+    <div class="modal-overlay" id="add-monitor-modal">
+        <div class="modal" style="max-width:500px;">
+            <div class="modal-header">
+                <div class="modal-title">
+                    <span>🔔</span> <span id="add-monitor-title">添加监控策略</span>
+                </div>
+                <button class="modal-close" onclick="closeAddMonitorModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;color:var(--text-secondary);line-height:1.8;margin-bottom:20px;">
+                    <strong>📌 条件格式说明：</strong><br>
+                    • <code style="color:var(--accent-light)">上证指数 > 3500</code> — 上证指数超过3500点<br>
+                    • <code style="color:var(--accent-light)">上证指数 &lt; 3000</code> — 上证指数低于3000点<br>
+                    • <code style="color:var(--accent-light)">港股 02476 > 300</code> — 港股胜宏科技超过300港元<br>
+                    • <code style="color:var(--accent-light)">港股 03690 >= 150</code> — 港股美团大于等于150港元<br>
+                    • <code style="color:var(--accent-light)">A股 000001 > 20</code> — A股平安银行超过20元<br>
+                    支持运算符：<code>&gt;</code> <code>&gt;=</code> <code>&lt;</code> <code>&lt;=</code>
+                </div>
+                <input type="hidden" id="monitor-edit-id">
+                <div class="form-group">
+                    <label class="form-label">策略名称 *</label>
+                    <input type="text" class="form-input" id="monitor-name" placeholder="如：上证突破3500点提醒">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">满足条件 *</label>
+                    <input type="text" class="form-input" id="monitor-condition" placeholder="如：上证指数 > 3500">
+                    <div id="monitor-condition-hint" style="font-size:11px;margin-top:4px;color:var(--text-muted);"></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">通知邮箱 *</label>
+                    <input type="email" class="form-input" id="monitor-email" placeholder="notify@example.com">
+                </div>
+                <div id="monitor-save-status" style="font-size:12px;margin-top:4px;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeAddMonitorModal()" style="flex:1">取消</button>
+                <button class="btn btn-primary" onclick="saveMonitorStrategy()" style="flex:1" id="monitor-save-btn">
+                    保存策略
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 监控日志弹窗 -->
+    <div class="modal-overlay" id="monitor-log-modal">
+        <div class="modal" style="max-width:560px;">
+            <div class="modal-header">
+                <div class="modal-title">
+                    <span id="monitor-log-status-dot" style="font-size:10px;">🟢</span>
+                    <span id="monitor-log-title">监控日志</span>
+                </div>
+                <button class="modal-close" onclick="closeMonitorLogModal()">✕</button>
+            </div>
+            <div class="modal-body" style="padding:16px;">
+                <div id="monitor-log-info" style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;background:var(--bg-secondary);padding:10px 14px;border-radius:8px;border:1px solid var(--border);">
+                </div>
+                <div style="display:flex;gap:8px;margin-bottom:12px;">
+                    <button class="btn btn-primary" id="monitor-run-btn" onclick="toggleMonitor()" style="flex:1;padding:10px;">
+                        ▶ 运行测试
+                    </button>
+                    <button class="btn btn-secondary" onclick="clearMonitorLog()" style="flex:0 0 auto;padding:10px 16px;">
+                        清空
+                    </button>
+                </div>
+                <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:12px;font-family:'JetBrains Mono',monospace;max-height:260px;overflow-y:auto;min-height:80px;" id="monitor-log-box">
+                    <span style="color:var(--text-muted)">点击「运行测试」开始实时监控...</span>
+                </div>
+            </div>
+            <div class="modal-footer" style="justify-content:flex-end;">
+                <button class="btn btn-secondary" onclick="closeMonitorLogModal()" style="padding:8px 24px;width:auto;">关闭</button>
             </div>
         </div>
     </div>
@@ -2511,7 +2591,243 @@
             statusEl.textContent = '网络错误';
         }
     }
+    // ===================== 监控策略管理 =====================
+    let _monitorStrategies = [];
+    let _activeMonitorId = null;  // 当前打开日志的策略ID
+    let _monitorLogTimer = null;  // 日志轮询定时器
+
+    // 页面加载时获取监控策略列表
+    async function loadMonitorStrategies() {
+        try {
+            const resp = await fetch('/api/monitor/strategies');
+            const data = await resp.json();
+            _monitorStrategies = data.strategies || [];
+            renderMonitorStrategyList();
+        } catch (e) {
+            console.warn('加载监控策略失败:', e);
+        }
+    }
+
+    function renderMonitorStrategyList() {
+        const container = document.getElementById('monitor-strategy-list');
+        if (!container) return;
+        if (_monitorStrategies.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+        container.innerHTML = `
+            <div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;padding:8px 4px 4px;border-top:1px solid var(--border);margin-top:4px;">
+                📋 自定义监控策略
+            </div>
+        ` + _monitorStrategies.map(s => `
+            <div class="strategy-item" style="padding:10px 14px;" id="monitor-item-${s.id}">
+                <div class="strategy-item-row">
+                    <div class="strategy-item-info" onclick="openMonitorLog('${s.id}')" style="cursor:pointer;flex:1;">
+                        <div class="strategy-name" style="font-size:13px;display:flex;align-items:center;gap:6px;">
+                            <span id="monitor-status-dot-${s.id}" style="font-size:9px;">⚫</span>
+                            ${s.name}
+                        </div>
+                        <div class="strategy-desc" style="font-size:11px;">${s.condition}</div>
+                        ${s.last_triggered ? `<div style="font-size:10px;color:var(--success);margin-top:2px;">上次触发: ${s.last_triggered}</div>` : ''}
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex-shrink:0;">
+                        <button class="config-btn" onclick="event.stopPropagation();editMonitorStrategy('${s.id}')" title="编辑策略" style="width:24px;height:24px;font-size:12px;">✏️</button>
+                        <button class="config-btn" onclick="event.stopPropagation();deleteMonitorStrategy('${s.id}')" title="删除策略" style="width:24px;height:24px;font-size:12px;color:var(--danger);">🗑</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // 打开「添加监控策略」弹窗
+    function openAddMonitorModal() {
+        document.getElementById('add-monitor-title').textContent = '添加监控策略';
+        document.getElementById('monitor-edit-id').value = '';
+        document.getElementById('monitor-name').value = '';
+        document.getElementById('monitor-condition').value = '';
+        document.getElementById('monitor-email').value = '';
+        document.getElementById('monitor-save-status').innerHTML = '';
+        document.getElementById('monitor-save-btn').textContent = '保存策略';
+        document.getElementById('add-monitor-modal').classList.add('show');
+        document.getElementById('monitor-name').focus();
+    }
+
+    function closeAddMonitorModal() {
+        document.getElementById('add-monitor-modal').classList.remove('show');
+    }
+
+    // 编辑已有监控策略
+    function editMonitorStrategy(id) {
+        const s = _monitorStrategies.find(s => s.id === id);
+        if (!s) return;
+        document.getElementById('add-monitor-title').textContent = '编辑监控策略';
+        document.getElementById('monitor-edit-id').value = s.id;
+        document.getElementById('monitor-name').value = s.name;
+        document.getElementById('monitor-condition').value = s.condition;
+        document.getElementById('monitor-email').value = s.notify_email;
+        document.getElementById('monitor-save-status').innerHTML = '';
+        document.getElementById('monitor-save-btn').textContent = '保存修改';
+        document.getElementById('add-monitor-modal').classList.add('show');
+    }
+
+    // 保存监控策略（新建或编辑）
+    async function saveMonitorStrategy() {
+        const editId = document.getElementById('monitor-edit-id').value;
+        const name = document.getElementById('monitor-name').value.trim();
+        const condition = document.getElementById('monitor-condition').value.trim();
+        const email = document.getElementById('monitor-email').value.trim();
+        const statusEl = document.getElementById('monitor-save-status');
+
+        if (!name || !condition || !email) {
+            statusEl.innerHTML = '<span style="color:var(--danger)">⚠ 请填写全部字段</span>';
+            return;
+        }
+
+        const btn = document.getElementById('monitor-save-btn');
+        btn.disabled = true;
+        btn.textContent = '保存中...';
+
+        try {
+            let resp, data;
+            if (editId) {
+                resp = await fetch(`/api/monitor/strategies/${editId}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name, condition, notify_email: email})
+                });
+            } else {
+                resp = await fetch('/api/monitor/strategies', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name, condition, notify_email: email})
+                });
+            }
+            data = await resp.json();
+            if (data.success) {
+                closeAddMonitorModal();
+                await loadMonitorStrategies();
+            } else {
+                statusEl.innerHTML = `<span style="color:var(--danger)">❌ ${data.message}</span>`;
+            }
+        } catch (e) {
+            statusEl.innerHTML = `<span style="color:var(--danger)">网络错误: ${e.message}</span>`;
+        } finally {
+            btn.disabled = false;
+            btn.textContent = editId ? '保存修改' : '保存策略';
+        }
+    }
+
+    // 删除监控策略
+    async function deleteMonitorStrategy(id) {
+        const s = _monitorStrategies.find(s => s.id === id);
+        if (!s) return;
+        if (!confirm(`确认删除「${s.name}」？`)) return;
+
+        // 先停止监控
+        await fetch(`/api/monitor/stop/${id}`, {method: 'POST'});
+
+        const resp = await fetch(`/api/monitor/strategies/${id}`, {method: 'DELETE'});
+        const data = await resp.json();
+        if (data.success) {
+            await loadMonitorStrategies();
+        }
+    }
+
+    // 打开监控日志弹窗
+    function openMonitorLog(id) {
+        const s = _monitorStrategies.find(s => s.id === id);
+        if (!s) return;
+        _activeMonitorId = id;
+        document.getElementById('monitor-log-title').textContent = s.name;
+        document.getElementById('monitor-log-info').innerHTML = `
+            <strong>条件：</strong>${s.condition}<br>
+            <strong>通知邮箱：</strong>${s.notify_email}
+            ${s.last_triggered ? `<br><strong>上次触发：</strong>${s.last_triggered}` : ''}
+        `;
+        document.getElementById('monitor-log-modal').classList.add('show');
+
+        // 立即刷新状态
+        refreshMonitorLog(id);
+        _monitorLogTimer = setInterval(() => refreshMonitorLog(id), 3000);
+    }
+
+    function closeMonitorLogModal() {
+        document.getElementById('monitor-log-modal').classList.remove('show');
+        if (_monitorLogTimer) { clearInterval(_monitorLogTimer); _monitorLogTimer = null; }
+        _activeMonitorId = null;
+    }
+
+    async function refreshMonitorLog(id) {
+        try {
+            const resp = await fetch(`/api/monitor/status/${id}`);
+            const data = await resp.json();
+            const status = data.status || 'stopped';
+
+            // 更新按钮
+            const runBtn = document.getElementById('monitor-run-btn');
+            const dot = document.getElementById('monitor-log-status-dot');
+            if (status === 'running') {
+                runBtn.innerHTML = '⏹ 停止监控';
+                runBtn.style.background = 'linear-gradient(135deg,#ef4444,#b91c1c)';
+                dot.textContent = '🟢';
+            } else {
+                runBtn.innerHTML = '▶ 运行测试';
+                runBtn.style.background = '';
+                dot.textContent = '⚫';
+            }
+
+            // 更新列表中的状态点
+            const listDot = document.getElementById(`monitor-status-dot-${id}`);
+            if (listDot) listDot.textContent = status === 'running' ? '🟢' : '⚫';
+
+            // 更新日志
+            const box = document.getElementById('monitor-log-box');
+            if (data.log && data.log.length > 0) {
+                box.innerHTML = data.log.map(line => {
+                    const color = line.includes('✅') ? 'var(--success)'
+                                : line.includes('❌') ? 'var(--danger)'
+                                : line.includes('触发') ? 'var(--warning)'
+                                : 'var(--text-secondary)';
+                    return `<div style="color:${color};margin-bottom:3px;">${line}</div>`;
+                }).join('');
+                box.scrollTop = box.scrollHeight;
+            }
+        } catch (e) {}
+    }
+
+    async function toggleMonitor() {
+        if (!_activeMonitorId) return;
+        try {
+            const resp = await fetch(`/api/monitor/status/${_activeMonitorId}`);
+            const data = await resp.json();
+            if (data.status === 'running') {
+                await fetch(`/api/monitor/stop/${_activeMonitorId}`, {method: 'POST'});
+            } else {
+                await fetch(`/api/monitor/start/${_activeMonitorId}`, {method: 'POST'});
+            }
+            await refreshMonitorLog(_activeMonitorId);
+        } catch (e) {}
+    }
+
+    function clearMonitorLog() {
+        document.getElementById('monitor-log-box').innerHTML =
+            '<span style="color:var(--text-muted)">日志已清空</span>';
+    }
+
+    // 点击遮罩关闭弹窗
+    document.getElementById('add-monitor-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeAddMonitorModal();
+    });
+    document.getElementById('monitor-log-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeMonitorLogModal();
+    });
+
+    // 页面加载时同时加载监控策略
+    document.addEventListener('DOMContentLoaded', () => {
+        loadMonitorStrategies();
+    });
+
     </script>
-    <div class="version-badge">v1.0.3</div>
+    <div class="version-badge">v1.0.5</div>
 </body>
 </html>
